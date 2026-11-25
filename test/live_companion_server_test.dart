@@ -369,11 +369,71 @@ void main() {
         'message': 'Resumed session',
         'output': 'Resuming Fix checkout tax…',
         'rate_limit': null,
-      }
+      },
+      // Untouched idle default shell MUST be filtered out from ACTIVE/Live!
+      {
+        'id': 99,
+        'project_id': 2,
+        'project_name': 'unused-repo',
+        'label': 'zsh',
+        'branch': 'main',
+        'provider': null,
+        'profile': null,
+        'supports_profiles': false,
+        'status': 'idle',
+        'status_label': 'Idle',
+        'message': null,
+        'output': '',
+        'rate_limit': null,
+      },
+      // Running foreground shell process (e.g. npm run dev) MUST stay in ACTIVE!
+      {
+        'id': 100,
+        'project_id': 3,
+        'project_name': 'dev-server-app',
+        'label': 'npm',
+        'branch': 'main',
+        'provider': null,
+        'profile': null,
+        'supports_profiles': false,
+        'status': 'running',
+        'status_label': 'Running',
+        'message': 'Listening on :3000',
+        'output': 'ready on http://localhost:3000',
+        'rate_limit': null,
+      },
+      // Explicitly opened remote shell MUST stay in ACTIVE even while idle!
+      {
+        'id': 101,
+        'project_id': 4,
+        'project_name': 'remote-shell-app',
+        'label': 'zsh',
+        'branch': 'main',
+        'provider': null,
+        'profile': null,
+        'supports_profiles': false,
+        'status': 'idle',
+        'status_label': 'Idle',
+        'message': null,
+        'output': '~/code ❯ ',
+        'rate_limit': null,
+        'remote_opened': true,
+      },
     ];
     pushSse(withResumedPane);
     await Future<void>.delayed(const Duration(milliseconds: 150));
     expect(ctrl.selectedPane?.id, 2);
+    expect(ctrl.snapshot.panes.map((p) => p.id).toList(), [1, 2, 100, 101]);
+    expect(ctrl.snapshot.panes.any((p) => p.id == 99), isFalse);
+
+    // 5. Closing a pane dispatches POST /api/pane/101/close and removes it cleanly
+    final shellPane = ctrl.snapshot.panes.firstWhere((p) => p.id == 101);
+    await ctrl.closePane(shellPane);
+    expect(
+      receivedActions.any((a) => a['path'] == '/api/pane/101/close'),
+      isTrue,
+    );
+    expect(ctrl.snapshot.panes.any((p) => p.id == 101), isFalse);
 
     ctrl.dispose();
   });

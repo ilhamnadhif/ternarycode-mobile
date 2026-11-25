@@ -46,7 +46,7 @@ class AppController extends ChangeNotifier {
   ApkReleaseInfo? _availableUpdate;
   ApkReleaseInfo? get availableUpdate => _availableUpdate;
 
-  String _appVersion = '0.2.1';
+  String _appVersion = '0.2.2';
   String get appVersion => _appVersion;
 
   bool _bootstrapped = false;
@@ -143,9 +143,14 @@ class AppController extends ChangeNotifier {
   // Deduplication map: paneId -> last notified status signature
   final Map<int, String> _notifiedSignatures = {};
 
-  // Auto-focus newly spawned pane when SSE delivers it
+  // Auto-focus newly spawned/resumed pane when SSE delivers it
   int? _pendingSpawnProjectId;
+  bool _pendingSpawnIsShell = false;
   Set<int> _paneIdsBeforeSpawn = const {};
+
+  // Shells explicitly opened from mobile (fallback for older desktop <v0.3.16
+  // that does not yet emit `remote_opened: true`)
+  final Set<int> _locallyOpenedShellIds = {};
 
   Future<void> init() async {
     if (_bootstrapped) return;
@@ -368,11 +373,16 @@ class AppController extends ChangeNotifier {
       _hosts.removeWhere((h) => h.baseUrl == normalized);
       _hosts.insert(0, newHost);
       _activeHostId = hostId;
-      _snapshot = initialSnap;
+      _locallyOpenedShellIds.clear();
+      final filteredInitial = initialSnap.copyWith(
+        panes: initialSnap.panes.where((p) => !p.isBareIdleShell).toList(),
+      );
+      _snapshot = filteredInitial;
       _hasSnapshotForHost = true;
       _consecutiveFailures = 0;
-      _selectedPaneId =
-          initialSnap.panes.isNotEmpty ? initialSnap.panes.first.id : null;
+      _selectedPaneId = filteredInitial.panes.isNotEmpty
+          ? filteredInitial.panes.first.id
+          : null;
 
       await _storage.writeToken(hostId, result.deviceToken);
       await _storage.saveHosts(_hosts);
@@ -401,6 +411,7 @@ class AppController extends ChangeNotifier {
     _hasSnapshotForHost = false;
     _consecutiveFailures = 0;
     _backoffAttempt = 0;
+    _locallyOpenedShellIds.clear();
     final target = _hosts[idx];
     if (!target.isDemo) {
       await _storage.saveActiveHostId(hostId);
@@ -464,6 +475,7 @@ class AppController extends ChangeNotifier {
     _snapshot = const CompanionSnapshot();
     _hasSnapshotForHost = false;
     _consecutiveFailures = 0;
+    _locallyOpenedShellIds.clear();
     _selectedPaneId = null;
     _phase = ConnectionPhase.disconnected;
     _connectionError = null;
@@ -591,21 +603,47 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  void _applySnapshot(String hostId, CompanionSnapshot snap, {int? latencyMs}) {
+  void _applySnapshot(String hostId, CompanionSnapshot rawSnap, {int? latencyMs}) {
     final prev = _snapshot;
-    _snapshot = snap;
 
-    // If user just spawned a new agent on a project, auto-focus the newly created pane.
+    // Prune locally tracked shells that desktop has since closed.
+    final rawIds = rawSnap.panes.map((p) => p.id).toSet();
+    _locallyOpenedShellIds.removeWhere((id) => !rawIds.contains(id));
+
+    // If user just spawned/resumed on a project, catch the newly created (or
+    // woken) pane before filtering so explicitly spawned shells stay visible
+    // even on older desktops (<v0.3.16) that omit `remote_opened`.
+    int? autoFocusId;
     if (_pendingSpawnProjectId != null) {
       final targetProj = _pendingSpawnProjectId!;
-      final spawned = snap.panes.where(
-        (p) => p.projectId == targetProj && !_paneIdsBeforeSpawn.contains(p.id),
+      final spawned = rawSnap.panes.where(
+        (p) =>
+            p.projectId == targetProj &&
+            !_paneIdsBeforeSpawn.contains(p.id) &&
+            (_pendingSpawnIsShell || !p.isBareIdleShell),
       );
       if (spawned.isNotEmpty) {
-        _selectedPaneId = spawned.last.id;
+        autoFocusId = spawned.last.id;
+        if (_pendingSpawnIsShell) {
+          _locallyOpenedShellIds.add(autoFocusId);
+        }
         _pendingSpawnProjectId = null;
+        _pendingSpawnIsShell = false;
         _paneIdsBeforeSpawn = const {};
       }
+    }
+
+    // Never let untouched idle default shells (`zsh · Idle`) pollute ACTIVE/Live.
+    final visiblePanes = rawSnap.panes
+        .where(
+          (p) => !p.isBareIdleShell || _locallyOpenedShellIds.contains(p.id),
+        )
+        .toList();
+    final snap = rawSnap.copyWith(panes: visiblePanes);
+    _snapshot = snap;
+
+    if (autoFocusId != null && snap.panes.any((p) => p.id == autoFocusId)) {
+      _selectedPaneId = autoFocusId;
     }
 
     if (_selectedPaneId == null ||
@@ -911,6 +949,7 @@ class AppController extends ChangeNotifier {
     if (token == null) return;
 
     _pendingSpawnProjectId = project.id;
+    _pendingSpawnIsShell = false;
     _paneIdsBeforeSpawn = _snapshot.panes
         .where((p) => p.projectId == project.id)
         .map((p) => p.id)
@@ -979,6 +1018,7 @@ class AppController extends ChangeNotifier {
     if (token == null) return;
 
     _pendingSpawnProjectId = project.id;
+    _pendingSpawnIsShell = agent == 'shell';
     _paneIdsBeforeSpawn = _snapshot.panes
         .where((p) => p.projectId == project.id)
         .map((p) => p.id)
@@ -997,7 +1037,46 @@ class AppController extends ChangeNotifier {
       notifyListeners();
     } on CompanionApiException catch (e) {
       _pendingSpawnProjectId = null;
+      _pendingSpawnIsShell = false;
       _paneIdsBeforeSpawn = const {};
+      _handleActionError(host.id, e);
+    }
+  }
+
+  /// Closes an active agent or terminal pane on desktop (removing it from Active).
+  Future<void> closePane(CompanionPane pane) async {
+    _triggerHaptic(strong: true);
+    if (isDemoMode) {
+      final remaining = _snapshot.panes.where((p) => p.id != pane.id).toList();
+      _snapshot = _snapshot.copyWith(panes: remaining);
+      if (_selectedPaneId == pane.id) {
+        _selectedPaneId = remaining.isNotEmpty ? remaining.first.id : null;
+      }
+      showToast('Closed ${pane.label} in ${pane.projectName}');
+      notifyListeners();
+      return;
+    }
+
+    final host = activeHost;
+    if (host == null) return;
+    final token = await _storage.readToken(host.id);
+    if (token == null) return;
+
+    try {
+      await _api.closePane(
+        baseUrl: host.baseUrl,
+        token: token,
+        paneId: pane.id,
+      );
+      _locallyOpenedShellIds.remove(pane.id);
+      final remaining = _snapshot.panes.where((p) => p.id != pane.id).toList();
+      _snapshot = _snapshot.copyWith(panes: remaining);
+      if (_selectedPaneId == pane.id) {
+        _selectedPaneId = remaining.isNotEmpty ? remaining.first.id : null;
+      }
+      showToast('Closed ${pane.label} in ${pane.projectName}');
+      notifyListeners();
+    } on CompanionApiException catch (e) {
       _handleActionError(host.id, e);
     }
   }

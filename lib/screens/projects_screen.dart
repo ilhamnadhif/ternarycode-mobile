@@ -55,6 +55,56 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     );
   }
 
+  Future<void> _confirmClosePane(
+    BuildContext context,
+    CompanionPane pane,
+  ) async {
+    final busy = pane.status == 'running' || pane.status == 'needs_input';
+    if (!busy) {
+      await widget.controller.closePane(pane);
+      return;
+    }
+    final c = context.slate;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dlgCtx) => AlertDialog(
+        backgroundColor: c.overlay,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: BorderSide(color: c.lineStrong),
+        ),
+        title: Text(
+          'Close ${pane.label}?',
+          style: SlateTypography.title(c, size: 16),
+        ),
+        content: Text(
+          'This stops the active session in ${pane.projectName}.',
+          style: SlateTypography.body2(c),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dlgCtx).pop(false),
+            child: Text(
+              'Cancel',
+              style: SlateTypography.body(c).copyWith(color: c.text2),
+            ),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dlgCtx).pop(true),
+            child: Text(
+              'Close',
+              style: SlateTypography.body(c, weight: FontWeight.w600)
+                  .copyWith(color: c.failed),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await widget.controller.closePane(pane);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = context.slate;
@@ -152,6 +202,10 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
                                   showTopDivider: i > 0,
                                   onTap: () =>
                                       ctrl.focusPane(activePanes[i].id),
+                                  onClose: () => _confirmClosePane(
+                                    context,
+                                    activePanes[i],
+                                  ),
                                 ),
                             ],
                           ),
@@ -195,12 +249,14 @@ class _ActivePaneRow extends StatelessWidget {
     required this.selected,
     required this.showTopDivider,
     required this.onTap,
+    required this.onClose,
   });
 
   final CompanionPane pane;
   final bool selected;
   final bool showTopDivider;
   final VoidCallback onTap;
+  final VoidCallback onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -240,9 +296,30 @@ class _ActivePaneRow extends StatelessWidget {
         style: SlateTypography.body(c, weight: FontWeight.w500),
       ),
       monoSubtitle: subParts.join(' · '),
-      trailing: StatusPill(
-        status: pane.effectiveStatus,
-        label: pane.effectiveStatusLabel,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          StatusPill(
+            status: pane.effectiveStatus,
+            label: pane.effectiveStatusLabel,
+          ),
+          const SizedBox(width: 6),
+          Tooltip(
+            message: 'Close pane',
+            child: InkWell(
+              onTap: onClose,
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.all(5),
+                child: Icon(
+                  PhosphorIconsRegular.x,
+                  size: 13,
+                  color: c.text3,
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       onTap: onTap,
     );

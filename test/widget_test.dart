@@ -152,11 +152,20 @@ void main() {
     expect(ctrl.selectedPane?.projectName, 'zain-iq');
     expect(ctrl.snapshot.panes.length, 5);
 
-    // Clear filter and switch to Accounts
+    // Clear filter, verify closing an active pane in ACTIVE list, and switch to Accounts
     await tester.tap(find.text('Projects'));
     await tester.pump();
     await tester.enterText(find.byType(TextField).last, '');
     await tester.pump();
+    expect(find.text('ACTIVE · 5'), findsOneWidget);
+    // Close the newly spawned running pane (shows confirmation dialog for running agent)
+    await tester.tap(find.byTooltip('Close pane').first);
+    await pumpRoute(tester);
+    expect(find.text('Close'), findsOneWidget);
+    await tester.tap(find.text('Close'));
+    await pumpRoute(tester);
+    expect(ctrl.snapshot.panes.length, 4);
+    expect(find.text('ACTIVE · 4'), findsOneWidget);
 
     // Screen 12 · Accounts & Quotas
     await tester.tap(find.text('Accounts'));

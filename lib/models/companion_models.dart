@@ -207,6 +207,7 @@ class CompanionPane {
     this.output = '',
     this.rateLimit,
     this.age = 'now',
+    this.remoteOpened = false,
   });
 
   final int id;
@@ -223,6 +224,7 @@ class CompanionPane {
   final String output;
   final CompanionRateLimit? rateLimit;
   final String age;
+  final bool remoteOpened;
 
   factory CompanionPane.fromJson(Map<String, dynamic> json) {
     return CompanionPane(
@@ -243,6 +245,7 @@ class CompanionPane {
               json['rate_limit'] as Map<String, dynamic>)
           : null,
       age: (json['age'] as String?) ?? 'live',
+      remoteOpened: (json['remote_opened'] as bool?) ?? false,
     );
   }
 
@@ -254,6 +257,7 @@ class CompanionPane {
     String? output,
     CompanionRateLimit? rateLimit,
     bool clearRateLimit = false,
+    bool? remoteOpened,
   }) {
     return CompanionPane(
       id: id,
@@ -270,6 +274,7 @@ class CompanionPane {
       output: output ?? this.output,
       rateLimit: clearRateLimit ? null : (rateLimit ?? this.rateLimit),
       age: age,
+      remoteOpened: remoteOpened ?? this.remoteOpened,
     );
   }
 
@@ -283,6 +288,17 @@ class CompanionPane {
 
   bool get isUrgent =>
       status == 'needs_input' || status == 'failed' || rateLimit != null;
+
+  /// True when this pane is just an untouched/idle default shell (no AI agent,
+  /// no active/running/failed process, not explicitly opened from mobile).
+  bool get isBareIdleShell {
+    final isShell =
+        (provider == null || provider!.isEmpty) && agentKey == 'shell';
+    return isShell &&
+        rateLimit == null &&
+        status == 'idle' &&
+        !remoteOpened;
+  }
 }
 
 class CompanionRateLimit {

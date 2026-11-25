@@ -396,6 +396,29 @@ class CompanionApi {
     }
   }
 
+  /// Closes a running/idle agent or terminal pane on desktop (`v0.3.16+`).
+  Future<void> closePane({
+    required String baseUrl,
+    required String token,
+    required int paneId,
+  }) async {
+    try {
+      await _postJson(
+        '${_cleanBase(baseUrl)}/api/pane/$paneId/close',
+        token,
+        const {},
+      );
+    } on CompanionApiException catch (e) {
+      if (e.statusCode == 404) {
+        throw const CompanionApiException(
+          'Update TernaryCode desktop to v0.3.16+ to close panes from phone.',
+          statusCode: 404,
+        );
+      }
+      rethrow;
+    }
+  }
+
   /// Probes local Wi-Fi `/24` subnet on port 7890 for running TernaryCode desktops.
   Future<List<DiscoveredHost>> discoverLanHosts({int port = 7890}) async {
     final candidates = <(int score, String prefix)>[];
