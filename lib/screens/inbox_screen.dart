@@ -80,6 +80,8 @@ class InboxScreen extends StatelessWidget {
                             controller.sendQuickAction(pane.id, 'reject'),
                         onFailover: (profId) =>
                             controller.switchProfile(pane.id, profId),
+                        onDismissLimit: () =>
+                            controller.dismissRateLimit(pane.id),
                       ),
                       const SizedBox(height: 10),
                     ],
@@ -158,6 +160,7 @@ class _UrgentInboxCard extends StatelessWidget {
     required this.onApprove,
     required this.onReject,
     required this.onFailover,
+    required this.onDismissLimit,
   });
 
   final CompanionPane pane;
@@ -166,6 +169,7 @@ class _UrgentInboxCard extends StatelessWidget {
   final VoidCallback onApprove;
   final VoidCallback onReject;
   final ValueChanged<String> onFailover;
+  final VoidCallback onDismissLimit;
 
   @override
   Widget build(BuildContext context) {
@@ -260,15 +264,28 @@ class _UrgentInboxCard extends StatelessWidget {
                     ],
                   ),
                 ),
-              ] else if (isLimited && nextProfile != null) ...[
+              ] else if (isLimited) ...[
                 const SizedBox(height: 10),
                 Padding(
                   padding: const EdgeInsets.only(left: 34),
-                  child: SlateButton(
-                    label: 'Resume on ${nextProfile!.id}',
-                    height: 30,
-                    variant: SlateButtonVariant.primary,
-                    onPressed: () => onFailover(nextProfile!.id),
+                  child: Row(
+                    children: [
+                      if (nextProfile != null) ...[
+                        SlateButton(
+                          label: 'Resume on ${nextProfile!.id}',
+                          height: 30,
+                          variant: SlateButtonVariant.primary,
+                          onPressed: () => onFailover(nextProfile!.id),
+                        ),
+                        const SizedBox(width: 7),
+                      ],
+                      SlateButton(
+                        label: 'Dismiss',
+                        height: 30,
+                        variant: SlateButtonVariant.secondary,
+                        onPressed: onDismissLimit,
+                      ),
+                    ],
                   ),
                 ),
               ],

@@ -58,10 +58,12 @@ class _StatusGlyphState extends State<StatusGlyph>
       _ctrl ??= AnimationController(
         vsync: this,
         duration: const Duration(milliseconds: 1000),
-      )..repeat();
+      );
+      if (!_ctrl!.isAnimating) {
+        _ctrl!.repeat();
+      }
     } else {
-      _ctrl?.dispose();
-      _ctrl = null;
+      _ctrl?.stop();
     }
   }
 
@@ -97,7 +99,7 @@ class _StatusGlyphState extends State<StatusGlyph>
     final (fg, _) = c.statusTone(widget.status);
     final icon = Icon(_iconFor(widget.status), size: widget.size, color: fg);
 
-    if (_ctrl == null) return icon;
+    if (!_shouldSpin || _ctrl == null) return icon;
     return AnimatedBuilder(
       animation: _ctrl!,
       builder: (_, child) =>

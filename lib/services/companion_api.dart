@@ -396,6 +396,25 @@ class CompanionApi {
     }
   }
 
+  /// Triggers an on-demand session history refresh on desktop (`v0.3.20+`) for
+  /// `projectId` and its worktrees. Silently ignored on older desktops (404).
+  Future<void> refreshProjectSessions({
+    required String baseUrl,
+    required String token,
+    required int projectId,
+  }) async {
+    try {
+      await _postJson(
+        '${_cleanBase(baseUrl)}/api/project/$projectId/sessions/refresh',
+        token,
+        const {},
+      );
+    } on CompanionApiException catch (e) {
+      if (e.statusCode == 404) return;
+      rethrow;
+    }
+  }
+
   /// Closes a running/idle agent or terminal pane on desktop (`v0.3.16+`).
   Future<void> closePane({
     required String baseUrl,

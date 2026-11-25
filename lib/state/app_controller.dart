@@ -52,7 +52,7 @@ class AppController extends ChangeNotifier {
   ApkReleaseInfo? _availableUpdate;
   ApkReleaseInfo? get availableUpdate => _availableUpdate;
 
-  String _appVersion = '0.3.4';
+  String _appVersion = '0.3.5';
   String get appVersion => _appVersion;
 
   bool _bootstrapped = false;
@@ -824,15 +824,74 @@ class AppController extends ChangeNotifier {
         paneId: paneId,
         action: action,
       );
+      if (action == 'dismiss_limit') {
+        _optimisticallyDismissRateLimit(paneId);
+      }
       final verb = action == 'approve'
           ? 'Approved'
           : action == 'reject'
               ? 'Rejected'
-              : 'Interrupted (^C)';
+              : action == 'dismiss_limit'
+                  ? 'Dismissed rate-limit notice'
+                  : 'Interrupted (^C)';
       showToast(verb);
     } on CompanionApiException catch (e) {
       _handleActionError(host.id, e);
     }
+  }
+
+  /// Dismisses a stale rate-limit banner on `paneId` and clears profile cooldown
+  /// on desktop when no other pane is still blocked on that profile.
+  Future<void> dismissRateLimit(int paneId) {
+    return sendQuickAction(paneId, 'dismiss_limit', skipBiometric: true);
+  }
+
+  /// Asks desktop (`v0.3.20+`) to refresh recent session history for `projectId`
+  /// and its worktrees so the Run / Resume Agent popup shows up-to-date items.
+  Future<void> refreshProjectSessions(int projectId) async {
+    if (isDemoMode) return;
+    final host = activeHost;
+    if (host == null) return;
+    final token = await _storage.readToken(host.id);
+    if (token == null) return;
+    try {
+      await _api.refreshProjectSessions(
+        baseUrl: host.baseUrl,
+        token: token,
+        projectId: projectId,
+      );
+    } catch (_) {
+      // Best-effort background refresh; older desktops safely ignore it.
+    }
+  }
+
+  void _optimisticallyDismissRateLimit(int paneId) {
+    final panes = List<CompanionPane>.of(_snapshot.panes);
+    final idx = panes.indexWhere((p) => p.id == paneId);
+    if (idx == -1) return;
+    final pane = panes[idx];
+    final profId = pane.rateLimit?.fromProfile ?? pane.profile;
+    panes[idx] = pane.copyWith(
+      clearRateLimit: true,
+      status: pane.status == 'rate_limited' ? 'idle' : pane.status,
+      statusLabel: pane.status == 'rate_limited' ? 'Idle' : pane.statusLabel,
+    );
+    var profiles = _snapshot.profiles;
+    if (profId != null && profId.isNotEmpty) {
+      final stillLimited = panes.any(
+        (p) => p.id != paneId && p.rateLimit?.fromProfile == profId,
+      );
+      if (!stillLimited) {
+        profiles = profiles
+            .map((pr) => pr.id == profId &&
+                    (pr.state == 'rate_limited' || pr.state == 'cooldown')
+                ? pr.copyWith(state: 'idle', clearResetsAt: true)
+                : pr)
+            .toList();
+      }
+    }
+    _snapshot = _snapshot.copyWith(panes: panes, profiles: profiles);
+    notifyListeners();
   }
 
   Future<void> sendTerminalInput(
@@ -1013,11 +1072,51 @@ class AppController extends ChangeNotifier {
   Future<void> resumeSession({
     required CompanionProject project,
     required CompanionSession session,
+    CompanionWorktree? worktree,
+    String? profileId,
   }) async {
     _triggerHaptic();
+    final targetId =
+        (worktree != null && worktree.id > 0) ? worktree.id : project.id;
+    final targetName =
+        worktree != null ? '${project.name} › ${worktree.name}' : project.name;
+    final targetBranch = worktree?.branch ?? project.branch;
+    final chosenProfile = (profileId != null && profileId.isNotEmpty)
+        ? profileId
+        : session.profile;
+
     if (isDemoMode) {
+      if (session.livePane != null &&
+          _snapshot.panes.any((p) => p.id == session.livePane)) {
+        focusPane(session.livePane!);
+        return;
+      }
+      final nextId =
+          _snapshot.panes.fold<int>(0, (m, p) => p.id > m ? p.id : m) + 1;
+      final label = _agentDisplayLabel(session.agent);
+      final newPane = CompanionPane(
+        id: nextId,
+        projectId: targetId,
+        parentProjectId: worktree != null ? project.id : null,
+        projectName: targetName,
+        label: label,
+        task: session.title,
+        branch: targetBranch,
+        provider: label,
+        profile: chosenProfile ?? _defaultProfileFor(session.agent),
+        supportsProfiles: session.agent == 'claude' ||
+            session.agent == 'codex' ||
+            session.agent == 'antigravity',
+        status: 'running',
+        statusLabel: 'Running',
+        message: 'Resumed ${session.title}',
+        age: 'now',
+        output: '● Resumed $label session “${session.title}” in $targetName…',
+      );
+      _snapshot = _snapshot.copyWith(panes: [newPane, ..._snapshot.panes]);
+      _selectedPaneId = nextId;
       _tabIndex = 0;
-      showToast('Resuming “${session.title}” in ${project.name}');
+      showToast('Resuming “${session.title}” in $targetName');
       notifyListeners();
       return;
     }
@@ -1027,10 +1126,10 @@ class AppController extends ChangeNotifier {
     final token = await _storage.readToken(host.id);
     if (token == null) return;
 
-    _pendingSpawnProjectId = project.id;
+    _pendingSpawnProjectId = targetId;
     _pendingSpawnIsShell = false;
     _paneIdsBeforeSpawn = _snapshot.panes
-        .where((p) => p.projectId == project.id)
+        .where((p) => p.projectId == targetId)
         .map((p) => p.id)
         .toSet();
 
@@ -1038,10 +1137,10 @@ class AppController extends ChangeNotifier {
       await _api.resumeSession(
         baseUrl: host.baseUrl,
         token: token,
-        projectId: project.id,
+        projectId: targetId,
         agent: session.agent,
         sessionId: session.id,
-        profileId: session.profile,
+        profileId: chosenProfile,
       );
       _tabIndex = 0;
       showToast('Resuming “${session.title}”');
@@ -1053,40 +1152,52 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// Spawns a new agent (or plain terminal `'shell'`) inside `project`.
+  /// Spawns a new agent (or plain terminal `'shell'`) inside `project` (or `worktree`).
   Future<void> spawnAgent({
     required CompanionProject project,
     required String agent,
     String? profileId,
+    CompanionWorktree? worktree,
   }) async {
     _triggerHaptic(strong: true);
     final label = _agentDisplayLabel(agent);
+    final targetId =
+        (worktree != null && worktree.id > 0) ? worktree.id : project.id;
+    final targetName =
+        worktree != null ? '${project.name} › ${worktree.name}' : project.name;
+    final targetBranch = worktree?.branch ?? project.branch;
 
     if (isDemoMode) {
-      final nextId = _snapshot.panes.fold<int>(0, (m, p) => p.id > m ? p.id : m) + 1;
+      final nextId =
+          _snapshot.panes.fold<int>(0, (m, p) => p.id > m ? p.id : m) + 1;
       final isShell = agent == 'shell';
-      final chosenProfile = isShell ? null : (profileId ?? _defaultProfileFor(agent));
+      final chosenProfile =
+          isShell ? null : (profileId ?? _defaultProfileFor(agent));
       final newPane = CompanionPane(
         id: nextId,
-        projectId: project.id,
-        projectName: project.name,
+        projectId: targetId,
+        parentProjectId: worktree != null ? project.id : null,
+        projectName: targetName,
         label: label,
-        branch: project.branch,
+        branch: targetBranch,
         provider: isShell ? null : label,
         profile: chosenProfile,
-        supportsProfiles: !isShell && (agent == 'claude' || agent == 'codex' || agent == 'antigravity'),
+        supportsProfiles: !isShell &&
+            (agent == 'claude' ||
+                agent == 'codex' ||
+                agent == 'antigravity'),
         status: 'running',
         statusLabel: 'Running',
         message: 'Started $label',
         age: 'now',
         output: isShell
-            ? '~/code/${project.name} ${project.branch ?? 'main'} ❯ '
-            : '● Starting $label in ${project.name}…\n◦ Ready for your instruction',
+            ? '~/code/$targetName ${targetBranch ?? 'main'} ❯ '
+            : '● Starting $label in $targetName…\n◦ Ready for your instruction',
       );
       _snapshot = _snapshot.copyWith(panes: [newPane, ..._snapshot.panes]);
       _selectedPaneId = nextId;
       _tabIndex = 0;
-      showToast('Started $label in ${project.name}');
+      showToast('Started $label in $targetName');
       notifyListeners();
       return;
     }
@@ -1096,10 +1207,10 @@ class AppController extends ChangeNotifier {
     final token = await _storage.readToken(host.id);
     if (token == null) return;
 
-    _pendingSpawnProjectId = project.id;
+    _pendingSpawnProjectId = targetId;
     _pendingSpawnIsShell = agent == 'shell';
     _paneIdsBeforeSpawn = _snapshot.panes
-        .where((p) => p.projectId == project.id)
+        .where((p) => p.projectId == targetId)
         .map((p) => p.id)
         .toSet();
 
@@ -1107,12 +1218,12 @@ class AppController extends ChangeNotifier {
       await _api.spawnAgent(
         baseUrl: host.baseUrl,
         token: token,
-        projectId: project.id,
+        projectId: targetId,
         agent: agent,
         profileId: profileId,
       );
       _tabIndex = 0;
-      showToast('Starting $label in ${project.name}…');
+      showToast('Starting $label in $targetName…');
       notifyListeners();
     } on CompanionApiException catch (e) {
       _pendingSpawnProjectId = null;
@@ -1269,6 +1380,9 @@ class AppController extends ChangeNotifier {
       _snapshot = _snapshot.copyWith(panes: panes);
       showToast('Rejected command in ${pane.projectName}');
       notifyListeners();
+    } else if (action == 'dismiss_limit') {
+      _optimisticallyDismissRateLimit(paneId);
+      showToast('Dismissed rate-limit notice');
     } else if (action == 'interrupt') {
       panes[idx] = pane.copyWith(
         status: 'idle',

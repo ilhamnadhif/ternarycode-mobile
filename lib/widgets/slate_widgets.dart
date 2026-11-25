@@ -421,12 +421,14 @@ class SlateNotice extends StatelessWidget {
     required this.title,
     required this.body,
     required this.leading,
+    this.trailing,
   });
 
   final String status;
   final String title;
   final String body;
   final Widget leading;
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -471,6 +473,10 @@ class SlateNotice extends StatelessWidget {
               ],
             ),
           ),
+          if (trailing != null) ...[
+            const SizedBox(width: 6),
+            trailing!,
+          ],
         ],
       ),
     );

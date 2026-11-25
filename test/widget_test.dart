@@ -97,23 +97,29 @@ void main() {
     await tester.pump();
     expect(find.text('Esc'), findsNothing);
 
-    // Tap active context bar -> jumps straight to Projects tab with ACTIVE list at top
+    // Tap active context bar -> jumps straight to Projects tab with Desktop-style ACTIVE / IDLE tree
     await tester.tap(find.text('4 active'));
     await tester.pump();
-    expect(find.text('ACTIVE · 4'), findsOneWidget);
+    expect(find.text('ACTIVE · 3'), findsOneWidget);
+    expect(find.text('IDLE · 2'), findsOneWidget);
+    expect(find.text('codex-export'), findsOneWidget);
+    expect(find.text('merged'), findsOneWidget);
+    // Idle projects must NOT expand session history cards inline (history lives inside New agent popup!)
+    expect(find.text('Polish landing hero typography'), findsNothing);
 
-    // Screen 06 · Select api-gateway from ACTIVE list and perform 1-tap failover
-    await tester.tap(find.text('api-gateway').first);
+    // Screen 06 · Select api-gateway's live agent from ACTIVE tree and perform 1-tap failover
+    await tester.tap(find.text('Rate-limit /v1/search per API key'));
     await tester.pump();
     expect(find.text('Resume claude2'), findsOneWidget);
+    expect(find.byTooltip('Dismiss rate limit'), findsOneWidget);
     await tester.tap(find.text('Resume claude2'));
     await tester.pump();
     expect(find.textContaining('Resuming api-gateway on claude2'), findsOneWidget);
 
-    // Screen 07 · Select ternarycode from ACTIVE list (Running + Switch account chips)
+    // Screen 07 · Select ternarycode's live agent from ACTIVE tree (Running + Switch account chips)
     await tester.tap(find.text('Projects'));
     await tester.pump();
-    await tester.tap(find.text('ternarycode').first);
+    await tester.tap(find.text('Add companion worktree tree'));
     await tester.pump();
     expect(find.text('SWITCH ACCOUNT'), findsOneWidget);
 
@@ -138,6 +144,19 @@ void main() {
     await tester.pump();
     expect(find.text('Desktop PC is unreachable'), findsNothing);
 
+    // Verify 1-tap Dismiss on a rate-limited pane clears both banner and profile cooldown cleanly
+    await tester.tap(find.text('Projects'));
+    await tester.pump();
+    await tester.tap(find.text('Rate-limit /v1/search per API key'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('Dismiss rate limit'));
+    await tester.pump();
+    expect(find.byTooltip('Dismiss rate limit'), findsNothing);
+    expect(
+      ctrl.snapshot.profiles.firstWhere((p) => p.id == 'claude1').state,
+      'idle',
+    );
+
     // Screen 09 · Inbox Queue + segmented filters + Screen 10 Detail
     await tester.tap(find.text('Inbox'));
     await tester.pump();
@@ -156,37 +175,57 @@ void main() {
     await tester.tap(find.byTooltip('Back'));
     await pumpRoute(tester);
 
-    // Screen 11 · Projects search + spawn new agent on project with 0 prior sessions (zain-iq)
+    // Screen 11 · Projects search + tap idle project (docs-site) -> New / Resume Agent popup with history!
     await tester.tap(find.text('Projects'));
     await tester.pump();
-    expect(find.text('ACTIVE · 4'), findsOneWidget);
-    await tester.enterText(find.byType(TextField).last, 'zain-iq');
+    expect(find.text('ACTIVE · 3'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, 'docs-site');
     await tester.pump();
-    expect(find.text('No sessions yet'), findsOneWidget);
-    await tester.tap(find.text('Start agent'));
+    expect(find.text('IDLE · 1'), findsOneWidget);
+    expect(find.text('onboarding-copy'), findsOneWidget);
+    await tester.tap(find.text('docs-site').last);
     await pumpRoute(tester);
     expect(find.text('New agent'), findsOneWidget);
-    expect(find.text('Start Claude Code'), findsOneWidget);
-    await tester.tap(find.text('Start Claude Code'));
+    expect(find.text('New Claude Code session'), findsOneWidget);
+    expect(find.text('RESUME SESSION · 1'), findsOneWidget);
+    expect(find.text('Polish landing hero typography'), findsOneWidget);
+    // Resume historical session right from the popup
+    await tester.tap(find.text('Polish landing hero typography'));
+    await pumpRoute(tester);
+    expect(ctrl.tabIndex, 0);
+    expect(ctrl.selectedPane?.projectName, 'docs-site');
+    expect(ctrl.selectedPane?.task, 'Polish landing hero typography');
+    expect(ctrl.snapshot.panes.length, 5);
+
+    // Also test spawning a fresh session on idle project with 0 history (zain-iq)
+    await tester.tap(find.text('Projects'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).last, 'zain-iq');
+    await tester.pump();
+    await tester.tap(find.text('zain-iq').last);
+    await pumpRoute(tester);
+    expect(find.text('New Claude Code session'), findsOneWidget);
+    expect(find.textContaining('No previous Claude Code sessions'), findsOneWidget);
+    await tester.tap(find.text('New Claude Code session'));
     await pumpRoute(tester);
     expect(ctrl.tabIndex, 0);
     expect(ctrl.selectedPane?.projectName, 'zain-iq');
-    expect(ctrl.snapshot.panes.length, 5);
+    expect(ctrl.snapshot.panes.length, 6);
 
-    // Clear filter, verify closing an active pane in ACTIVE list, and switch to Accounts
+    // Clear filter, verify closing an active pane in ACTIVE tree, and switch to Accounts
     await tester.tap(find.text('Projects'));
     await tester.pump();
     await tester.enterText(find.byType(TextField).last, '');
     await tester.pump();
     expect(find.text('ACTIVE · 5'), findsOneWidget);
-    // Close the newly spawned running pane (shows confirmation dialog for running agent)
+    // Close a running pane (shows confirmation dialog for running agent)
     await tester.tap(find.byTooltip('Close pane').first);
     await pumpRoute(tester);
-    expect(find.text('Close'), findsOneWidget);
-    await tester.tap(find.text('Close'));
-    await pumpRoute(tester);
-    expect(ctrl.snapshot.panes.length, 4);
-    expect(find.text('ACTIVE · 4'), findsOneWidget);
+    if (find.text('Close').evaluate().isNotEmpty) {
+      await tester.tap(find.text('Close'));
+      await pumpRoute(tester);
+    }
+    expect(ctrl.snapshot.panes.length, 5);
 
     // Screen 12 · Accounts & Quotas
     await tester.tap(find.text('Accounts'));

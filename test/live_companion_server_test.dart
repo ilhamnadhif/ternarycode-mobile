@@ -28,6 +28,26 @@ void main() {
         'id': 1,
         'name': 'storefront',
         'branch': 'main',
+        'worktrees': [
+          {
+            'id': 101,
+            'name': 'feat-checkout',
+            'branch': 'tc/feat-checkout',
+            'merged': true,
+            'status': 'idle',
+            'sessions': [
+              {
+                'id': 'sess-wt-99',
+                'title': 'Add promo code validation',
+                'agent': 'codex',
+                'profile': 'codex1',
+                'status': 'done',
+                'age': '20m ago',
+                'live_pane': null,
+              }
+            ],
+          }
+        ],
         'sessions': [
           {
             'id': 'sess-99',
@@ -293,6 +313,33 @@ void main() {
       'agent': 'claude',
       'profile_id': 'claude2',
     });
+
+    // 4b. Worktree spawn/resume, on-demand session refresh, and rate-limit dismiss
+    receivedActions.clear();
+    final proj = ctrl.snapshot.projects.first;
+    final wt = proj.worktrees.first;
+    expect(wt.id, 101);
+    expect(wt.merged, isTrue);
+    expect(wt.sessions.first.id, 'sess-wt-99');
+
+    await ctrl.refreshProjectSessions(proj.id);
+    await ctrl.spawnAgent(project: proj, worktree: wt, agent: 'codex');
+    await ctrl.resumeSession(
+      project: proj,
+      worktree: wt,
+      session: wt.sessions.first,
+    );
+    await ctrl.dismissRateLimit(1);
+
+    expect(receivedActions.length, 4);
+    expect(receivedActions[0]['path'], '/api/project/1/sessions/refresh');
+    expect(receivedActions[1]['path'], '/api/pane/spawn');
+    expect(receivedActions[1]['body']['project_id'], 101);
+    expect(receivedActions[2]['path'], '/api/session/resume');
+    expect(receivedActions[2]['body']['project_id'], 101);
+    expect(receivedActions[2]['body']['session_id'], 'sess-wt-99');
+    expect(receivedActions[3]['path'], '/api/pane/1/input');
+    expect(receivedActions[3]['body'], {'action': 'dismiss_limit'});
 
     // 5. Interactive TUI prompt selection (Claude Trust / Permission menus & [Y/n])
     final trustPrompt = InteractivePromptParser.parse('''

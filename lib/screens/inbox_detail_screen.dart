@@ -190,20 +190,36 @@ class InboxDetailScreen extends StatelessWidget {
                         ),
                       ],
                     )
-                  else if (pane.rateLimit != null && healthy.isNotEmpty)
+                  else if (pane.rateLimit != null)
                     Row(
                       children: [
+                        if (healthy.isNotEmpty) ...[
+                          Expanded(
+                            child: SlateButton(
+                              label: 'Resume ${healthy.first.id}',
+                              icon: PhosphorIconsRegular.arrowsLeftRight,
+                              variant: SlateButtonVariant.primary,
+                              expanded: true,
+                              onPressed: () async {
+                                await controller.switchProfile(
+                                    pane.id, healthy.first.id);
+                                if (context.mounted) {
+                                  controller.focusPane(pane.id);
+                                  Navigator.of(context).pop();
+                                }
+                              },
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                        ],
                         Expanded(
                           child: SlateButton(
-                            label: 'Resume ${healthy.first.id}',
-                            icon: PhosphorIconsRegular.arrowsLeftRight,
-                            variant: SlateButtonVariant.primary,
+                            label: 'Dismiss',
+                            variant: SlateButtonVariant.secondary,
                             expanded: true,
                             onPressed: () async {
-                              await controller.switchProfile(
-                                  pane.id, healthy.first.id);
+                              await controller.dismissRateLimit(pane.id);
                               if (context.mounted) {
-                                controller.focusPane(pane.id);
                                 Navigator.of(context).pop();
                               }
                             },
@@ -213,7 +229,7 @@ class InboxDetailScreen extends StatelessWidget {
                         Expanded(
                           child: SlateButton(
                             label: 'Open Live',
-                            variant: SlateButtonVariant.secondary,
+                            variant: SlateButtonVariant.raised,
                             expanded: true,
                             onPressed: () {
                               controller.focusPane(pane.id);

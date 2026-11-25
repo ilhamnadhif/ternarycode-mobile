@@ -63,11 +63,31 @@ class _LiveScreenState extends State<LiveScreen> {
     );
   }
 
-  CompanionProject? _projectForPane(CompanionSnapshot snap, CompanionPane pane) {
+  (CompanionProject, CompanionWorktree?)? _projectTargetForPane(
+    CompanionSnapshot snap,
+    CompanionPane pane,
+  ) {
+    final rootId = pane.rootProjectId;
     for (final pr in snap.projects) {
-      if (pr.id == pane.projectId) return pr;
+      if (pr.id == rootId) {
+        CompanionWorktree? wt;
+        if (pane.parentProjectId != null) {
+          for (final w in pr.worktrees) {
+            if (w.id == pane.projectId) {
+              wt = w;
+              break;
+            }
+          }
+        }
+        return (pr, wt);
+      }
+      for (final w in pr.worktrees) {
+        if (w.id != 0 && w.id == pane.projectId) {
+          return (pr, w);
+        }
+      }
     }
-    return snap.projects.isNotEmpty ? snap.projects.first : null;
+    return snap.projects.isNotEmpty ? (snap.projects.first, null) : null;
   }
 
   @override
@@ -303,18 +323,19 @@ class _LiveScreenState extends State<LiveScreen> {
                   ),
                 ),
               ),
-              if (_projectForPane(snap, pane) != null) ...[
+              if (_projectTargetForPane(snap, pane) != null) ...[
                 const SizedBox(width: 7),
                 SlateIconButton(
                   icon: PhosphorIconsRegular.plus,
-                  tooltip: 'New agent',
+                  tooltip: 'New or resume agent',
                   onPressed: () {
-                    final proj = _projectForPane(snap, pane);
-                    if (proj != null) {
+                    final target = _projectTargetForPane(snap, pane);
+                    if (target != null) {
                       showSpawnAgentSheet(
                         context: context,
                         controller: ctrl,
-                        project: proj,
+                        project: target.$1,
+                        initialWorktree: target.$2,
                       );
                     }
                   },
@@ -702,6 +723,7 @@ class _LiveScreenState extends State<LiveScreen> {
     bool keyboardOpen = false,
   }) {
     if (pane.rateLimit != null) {
+      final c = context.slate;
       final rl = pane.rateLimit!;
       final healthy = snap.healthyProfilesFor(pane);
       return [
@@ -710,8 +732,23 @@ class _LiveScreenState extends State<LiveScreen> {
           leading: const StatusGlyph(
               status: 'rate_limited', size: 16, animate: false),
           title:
-              '${rl.fromProfile} hit its 5h limit · resets in ${rl.resetsInLabel}',
+              '${rl.fromProfile} hit its usage limit · resets in ${rl.resetsInLabel}',
           body: rl.reason,
+          trailing: Tooltip(
+            message: 'Dismiss rate limit',
+            child: InkWell(
+              onTap: () => ctrl.dismissRateLimit(pane.id),
+              borderRadius: BorderRadius.circular(6),
+              child: Padding(
+                padding: const EdgeInsets.all(4),
+                child: Icon(
+                  PhosphorIconsRegular.x,
+                  size: 14,
+                  color: c.text2,
+                ),
+              ),
+            ),
+          ),
         ),
         if (healthy.isNotEmpty) ...[
           const SizedBox(height: 8),

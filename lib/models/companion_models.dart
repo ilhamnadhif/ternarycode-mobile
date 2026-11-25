@@ -138,20 +138,32 @@ class CompanionProject {
 
 class CompanionWorktree {
   const CompanionWorktree({
+    this.id = 0,
     required this.name,
     required this.branch,
+    this.merged = false,
     this.status = 'idle',
+    this.sessions = const [],
   });
 
+  final int id;
   final String name;
   final String branch;
+  final bool merged;
   final String status;
+  final List<CompanionSession> sessions;
 
   factory CompanionWorktree.fromJson(Map<String, dynamic> json) {
     return CompanionWorktree(
+      id: (json['id'] as num?)?.toInt() ?? 0,
       name: (json['name'] as String?) ?? '',
       branch: (json['branch'] as String?) ?? '',
+      merged: (json['merged'] as bool?) ?? false,
       status: (json['status'] as String?) ?? 'idle',
+      sessions: ((json['sessions'] as List?) ?? const [])
+          .whereType<Map<String, dynamic>>()
+          .map(CompanionSession.fromJson)
+          .toList(),
     );
   }
 }
@@ -195,8 +207,10 @@ class CompanionPane {
   const CompanionPane({
     required this.id,
     required this.projectId,
+    this.parentProjectId,
     required this.projectName,
     required this.label,
+    this.task,
     this.branch,
     this.provider,
     this.profile,
@@ -212,8 +226,10 @@ class CompanionPane {
 
   final int id;
   final int projectId;
+  final int? parentProjectId;
   final String projectName;
   final String label;
+  final String? task;
   final String? branch;
   final String? provider;
   final String? profile;
@@ -230,8 +246,10 @@ class CompanionPane {
     return CompanionPane(
       id: (json['id'] as num?)?.toInt() ?? 0,
       projectId: (json['project_id'] as num?)?.toInt() ?? 0,
+      parentProjectId: (json['parent_project_id'] as num?)?.toInt(),
       projectName: (json['project_name'] as String?) ?? 'workspace',
       label: (json['label'] as String?) ?? 'shell',
+      task: json['task'] as String?,
       branch: json['branch'] as String?,
       provider: json['provider'] as String?,
       profile: json['profile'] as String?,
@@ -262,8 +280,10 @@ class CompanionPane {
     return CompanionPane(
       id: id,
       projectId: projectId,
+      parentProjectId: parentProjectId,
       projectName: projectName,
       label: label,
+      task: task,
       branch: branch,
       provider: provider,
       profile: profile ?? this.profile,
@@ -276,6 +296,15 @@ class CompanionPane {
       age: age,
       remoteOpened: remoteOpened ?? this.remoteOpened,
     );
+  }
+
+  /// Root project id (parent repo id when running inside a git worktree).
+  int get rootProjectId => parentProjectId ?? projectId;
+
+  /// Sidebar display title matching Desktop (`task` prompt/rename when available, else agent label).
+  String get displayTitle {
+    final t = task?.trim();
+    return (t != null && t.isNotEmpty) ? t : label;
   }
 
   String get effectiveStatus => rateLimit != null ? 'rate_limited' : status;
@@ -404,6 +433,31 @@ class CompanionProfile {
               json['window_weekly'] as Map<String, dynamic>)
           : null,
       activeSession: json['active_session'] as String?,
+    );
+  }
+
+  CompanionProfile copyWith({
+    String? state,
+    bool? enabled,
+    int? resetsAtUnix,
+    bool clearResetsAt = false,
+  }) {
+    return CompanionProfile(
+      id: id,
+      name: name,
+      provider: provider,
+      accountHint: accountHint,
+      planType: planType,
+      signedIn: signedIn,
+      state: state ?? this.state,
+      enabled: enabled ?? this.enabled,
+      tokensIn: tokensIn,
+      tokensOut: tokensOut,
+      quotaPct: quotaPct,
+      resetsAtUnix: clearResetsAt ? null : (resetsAtUnix ?? this.resetsAtUnix),
+      window5h: window5h,
+      windowWeekly: windowWeekly,
+      activeSession: activeSession,
     );
   }
 
