@@ -46,7 +46,7 @@ class AppController extends ChangeNotifier {
   ApkReleaseInfo? _availableUpdate;
   ApkReleaseInfo? get availableUpdate => _availableUpdate;
 
-  String _appVersion = '0.3.0';
+  String _appVersion = '0.3.1';
   String get appVersion => _appVersion;
 
   bool _bootstrapped = false;
@@ -870,14 +870,16 @@ class AppController extends ChangeNotifier {
           : normalized;
 
       if (enter && clean.isNotEmpty) {
-        // Send text and Enter as two separate writes with a brief pause so TUI
-        // paste-burst detectors (Codex CLI, Claude Code, OpenCode, Antigravity)
-        // submit the prompt instead of turning Enter into a literal newline.
+        // Wrap multi-line prompts in ANSI bracketed paste so inner newlines do
+        // not submit early, then send standalone Enter after `enterDelay` so TUI
+        // paste-burst detectors submit instead of inserting a trailing newline.
+        final payload =
+            clean.contains('\n') ? '\x1B[200~$clean\x1B[201~' : clean;
         await _api.sendInput(
           baseUrl: host.baseUrl,
           token: token,
           paneId: paneId,
-          text: clean,
+          text: payload,
           enter: false,
         );
         if (enterDelay > Duration.zero) {

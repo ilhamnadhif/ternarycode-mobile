@@ -487,6 +487,8 @@ class SlateTextField extends StatelessWidget {
     this.mono = false,
     this.error = false,
     this.compact = false,
+    this.minLines = 1,
+    this.maxLines = 1,
     this.keyboardType,
     this.textInputAction,
     this.textCapitalization = TextCapitalization.none,
@@ -500,6 +502,8 @@ class SlateTextField extends StatelessWidget {
   final bool mono;
   final bool error;
   final bool compact;
+  final int minLines;
+  final int maxLines;
   final TextInputType? keyboardType;
   final TextInputAction? textInputAction;
   final TextCapitalization textCapitalization;
@@ -510,43 +514,50 @@ class SlateTextField extends StatelessWidget {
   Widget build(BuildContext context) {
     final c = context.slate;
     final rad = compact ? 8.0 : 9.0;
-    return SizedBox(
-      height: compact ? 38 : 42,
-      child: TextField(
-        controller: controller,
-        keyboardType: keyboardType,
-        textInputAction: textInputAction,
-        textCapitalization: textCapitalization,
-        onSubmitted: onSubmitted,
-        onChanged: onChanged,
-        style: mono
-            ? SlateTypography.data(c, size: 12.5, color: c.text)
-            : SlateTypography.body(c),
-        cursorColor: c.accent,
-        decoration: InputDecoration(
-          filled: true,
-          fillColor: c.inset,
-          hintText: hint,
-          hintStyle: mono
-              ? SlateTypography.data(c, size: 12, color: c.text3)
-              : TextStyle(fontFamily: 'Inter', fontSize: 13, color: c.text3),
-          prefixIcon: prefixIcon == null
-              ? null
-              : Icon(prefixIcon, size: 15, color: c.text3),
-          prefixIconConstraints: const BoxConstraints(minWidth: 34),
-          isDense: true,
-          contentPadding:
-              EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 9 : 11),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(rad),
-            borderSide: BorderSide(color: error ? c.failed : c.line),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(rad),
-            borderSide: BorderSide(color: error ? c.failed : c.accent, width: 1.2),
-          ),
+    final minH = compact ? 38.0 : 42.0;
+    final field = TextField(
+      controller: controller,
+      minLines: minLines,
+      maxLines: maxLines,
+      keyboardType: keyboardType,
+      textInputAction: textInputAction,
+      textCapitalization: textCapitalization,
+      onSubmitted: onSubmitted,
+      onChanged: onChanged,
+      style: mono
+          ? SlateTypography.data(c, size: 12.5, color: c.text)
+          : SlateTypography.body(c),
+      cursorColor: c.accent,
+      decoration: InputDecoration(
+        filled: true,
+        fillColor: c.inset,
+        hintText: hint,
+        hintStyle: mono
+            ? SlateTypography.data(c, size: 12, color: c.text3)
+            : TextStyle(fontFamily: 'Inter', fontSize: 13, color: c.text3),
+        prefixIcon: prefixIcon == null
+            ? null
+            : Icon(prefixIcon, size: 15, color: c.text3),
+        prefixIconConstraints: const BoxConstraints(minWidth: 34),
+        isDense: true,
+        contentPadding:
+            EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 9 : 11),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(rad),
+          borderSide: BorderSide(color: error ? c.failed : c.line),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(rad),
+          borderSide: BorderSide(color: error ? c.failed : c.accent, width: 1.2),
         ),
       ),
+    );
+    if (maxLines == 1) {
+      return SizedBox(height: minH, child: field);
+    }
+    return ConstrainedBox(
+      constraints: BoxConstraints(minHeight: minH),
+      child: field,
     );
   }
 }

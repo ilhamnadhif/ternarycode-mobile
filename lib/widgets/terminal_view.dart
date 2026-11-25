@@ -381,14 +381,17 @@ class PromptComposer extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Row(
+      crossAxisAlignment: CrossAxisAlignment.end,
       children: [
         Expanded(
           child: SlateTextField(
             controller: controller,
             hint: hint,
             compact: true,
-            textInputAction: TextInputAction.send,
-            onSubmitted: (_) => onSend(),
+            minLines: 1,
+            maxLines: 5,
+            keyboardType: TextInputType.multiline,
+            textInputAction: TextInputAction.newline,
           ),
         ),
         const SizedBox(width: 8),

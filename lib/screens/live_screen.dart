@@ -595,6 +595,7 @@ class _LiveScreenState extends State<LiveScreen> {
 
               // Composer row with ⌘ key-tray toggle + contextual ^C Stop when running
               Row(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   if (pane.rateLimit == null) ...[
                     Tooltip(

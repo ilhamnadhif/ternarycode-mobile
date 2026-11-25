@@ -246,6 +246,7 @@ void main() {
     //    standalone Enter key, switch-profile, resume-session, and spawn-agent.
     await ctrl.sendQuickAction(1, 'approve');
     await ctrl.sendTerminalInput(1, 'run tests\n', enter: true);
+    await ctrl.sendTerminalInput(1, 'line 1\nline 2', enter: true);
     await ctrl.sendTerminalInput(1, '', enter: true);
     await ctrl.switchProfile(1, 'claude2');
     await ctrl.resumeSession(
@@ -258,10 +259,10 @@ void main() {
       profileId: 'claude2',
     );
 
-    expect(receivedActions.length, 7);
+    expect(receivedActions.length, 9);
     expect(receivedActions[0]['path'], '/api/pane/1/input');
     expect(receivedActions[0]['body'], {'action': 'approve'});
-    // Prompt text sent first with enter: false, trailing newline trimmed
+    // Single-line prompt sent first with enter: false, trailing newline trimmed
     expect(receivedActions[1]['path'], '/api/pane/1/input');
     expect(receivedActions[1]['body'], {'text': 'run tests', 'enter': false});
     // Standalone Enter sent after enterDelay so Codex/Claude TUIs submit cleanly
@@ -270,15 +271,23 @@ void main() {
     final gapMs = (receivedActions[2]['ts'] as int) -
         (receivedActions[1]['ts'] as int);
     expect(gapMs, greaterThanOrEqualTo(45));
-    // Standalone Enter quick key sends one single request
+    // Multi-line prompt wrapped in ANSI bracketed paste + delayed Enter
     expect(receivedActions[3]['path'], '/api/pane/1/input');
-    expect(receivedActions[3]['body'], {'text': '', 'enter': true});
-    expect(receivedActions[4]['path'], '/api/pane/1/switch-profile');
-    expect(receivedActions[4]['body'], {'profile_id': 'claude2'});
-    expect(receivedActions[5]['path'], '/api/session/resume');
-    expect(receivedActions[5]['body']['session_id'], 'sess-99');
-    expect(receivedActions[6]['path'], '/api/pane/spawn');
-    expect(receivedActions[6]['body'], {
+    expect(receivedActions[3]['body'], {
+      'text': '\x1B[200~line 1\nline 2\x1B[201~',
+      'enter': false,
+    });
+    expect(receivedActions[4]['path'], '/api/pane/1/input');
+    expect(receivedActions[4]['body'], {'text': '', 'enter': true});
+    // Standalone Enter quick key sends one single request
+    expect(receivedActions[5]['path'], '/api/pane/1/input');
+    expect(receivedActions[5]['body'], {'text': '', 'enter': true});
+    expect(receivedActions[6]['path'], '/api/pane/1/switch-profile');
+    expect(receivedActions[6]['body'], {'profile_id': 'claude2'});
+    expect(receivedActions[7]['path'], '/api/session/resume');
+    expect(receivedActions[7]['body']['session_id'], 'sess-99');
+    expect(receivedActions[8]['path'], '/api/pane/spawn');
+    expect(receivedActions[8]['body'], {
       'project_id': 1,
       'agent': 'claude',
       'profile_id': 'claude2',
