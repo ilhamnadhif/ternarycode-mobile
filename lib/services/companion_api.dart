@@ -94,7 +94,7 @@ class CompanionApi {
     }
 
     if (resp.statusCode == 200) {
-      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final data = _decodeJsonMap(resp.body, 'Malformed pairing response from host.');
       final id = (data['device_id'] as String?) ?? '';
       final tok = (data['device_token'] as String?) ?? '';
       if (id.isEmpty || tok.isEmpty) {
@@ -161,7 +161,7 @@ class CompanionApi {
         latencyMs: sw.elapsedMilliseconds,
       );
     }
-    final map = jsonDecode(trimmed) as Map<String, dynamic>;
+    final map = _decodeJsonMap(trimmed, 'Unexpected non-JSON response from host.');
     return StateFetchResult(
       snapshot: CompanionSnapshot.fromJson(map),
       latencyMs: sw.elapsedMilliseconds,
@@ -250,7 +250,7 @@ class CompanionApi {
 
           bumpWatchdog();
           lineSub = resp
-              .transform(utf8.decoder)
+              .transform(const Utf8Decoder(allowMalformed: true))
               .transform(const LineSplitter())
               .listen(
             (line) {
@@ -561,6 +561,14 @@ class CompanionApi {
         statusCode: resp.statusCode,
       );
     }
+  }
+
+  Map<String, dynamic> _decodeJsonMap(String body, String errorMessage) {
+    try {
+      final decoded = jsonDecode(body);
+      if (decoded is Map<String, dynamic>) return decoded;
+    } catch (_) {}
+    throw CompanionApiException(errorMessage);
   }
 
   String? _extractError(String body) {

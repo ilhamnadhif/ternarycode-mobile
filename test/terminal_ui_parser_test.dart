@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ternarycode_mobile/services/ansi_parser.dart';
 import 'package:ternarycode_mobile/services/interactive_prompt_parser.dart';
+import 'package:ternarycode_mobile/theme/slate_theme.dart';
 import 'package:ternarycode_mobile/theme/slate_tokens.dart';
+import 'package:ternarycode_mobile/widgets/terminal_view.dart';
 
 void main() {
   group('InteractivePromptParser', () {
@@ -168,6 +170,105 @@ GPT-6-Luna low · ~/Developments/app
         lines.first.spans.last.style?.color,
         const Color.fromARGB(255, 10, 20, 30),
       );
+    });
+
+    test('tags wide desktop horizontal rules and multi-column CLI tables accurately', () {
+      const sample = '''
+────────────────────────────────────────────────────────────────────────────────
+❯ hi
+────────────────────────────────────────────────────────────────────────────────
+┌──────────┬─────────────────────────┬─────────┬───────┐
+│ Service  │ Operator yang dikirim   │ Request │ Gagal │
+├──────────┼─────────────────────────┼─────────┼───────┤
+│ gemezz   │ AE - Etisalat           │ 400     │ 0     │
+└──────────┴─────────────────────────┴─────────┴───────┘
+Normal prose paragraph stays wrapped.
+''';
+      final lines = AnsiTerminalParser.parse(sample, SlateColors.dark);
+      expect(lines[0].isHorizontalRule, isTrue);
+      expect(lines[0].isTableLine, isFalse);
+      expect(lines[1].isHorizontalRule, isFalse);
+      expect(lines[2].isHorizontalRule, isTrue);
+      expect(lines[3].isTableLine, isTrue);
+      expect(lines[4].isTableLine, isTrue);
+      expect(lines[5].isTableLine, isTrue);
+      expect(lines[6].isTableLine, isTrue);
+      expect(lines[7].isTableLine, isTrue);
+      expect(lines[8].isHorizontalRule, isFalse);
+      expect(lines[8].isTableLine, isFalse);
+    });
+  });
+
+  group('TerminalOutputView scroll stability & responsive rules/tables', () {
+    testWidgets('scrolling to bottom and tapping Latest NEVER bounces back to top',
+        (tester) async {
+      final ctrl = ScrollController();
+      addTearDown(ctrl.dispose);
+
+      final longOutput = [
+        for (var i = 1; i <= 60; i++)
+          '● Step $i: Processing operator report line with details for mobile scroll test',
+        '─' * 140,
+        '❯ ',
+        '─' * 140,
+        '┌──────────┬─────────────────────────┬─────────┬───────┐',
+        '│ Service  │ Operator yang dikirim   │ Request │ Gagal │',
+        '├──────────┼─────────────────────────┼─────────┼───────┤',
+        '│ gemezz   │ AE - Etisalat           │ 400     │ 0     │',
+        '└──────────┴─────────────────────────┴─────────┴───────┘',
+        'FINAL_BOTTOM_LINE_MARKER',
+      ].join('\n');
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: SlateTheme.build(Brightness.dark),
+          home: Scaffold(
+            body: SizedBox(
+              width: 360,
+              height: 420,
+              child: TerminalOutputView(
+                paneId: 1,
+                output: longOutput,
+                controller: ctrl,
+                wrap: true,
+                showLatestPill: true,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Initially stuck at bottom, Latest pill hidden, wide table gets an inline horizontal scroller
+      expect(ctrl.position.maxScrollExtent, greaterThan(400));
+      expect(ctrl.offset, closeTo(ctrl.position.maxScrollExtent, 2.0));
+      expect(find.text('Latest'), findsNothing);
+      final horizontalScrollers = tester
+          .widgetList<SingleChildScrollView>(find.byType(SingleChildScrollView))
+          .where((w) => w.scrollDirection == Axis.horizontal)
+          .toList();
+      expect(horizontalScrollers.length, 1);
+
+      // Scroll up near top -> Latest pill appears
+      ctrl.jumpTo(40);
+      await tester.pumpAndSettle();
+      expect(find.text('Latest'), findsOneWidget);
+
+      // Scroll back down into bottom zone -> pill hides WITHOUT resetting offset back to 0!
+      final bottom = ctrl.position.maxScrollExtent;
+      ctrl.jumpTo(bottom - 20);
+      await tester.pumpAndSettle();
+      expect(find.text('Latest'), findsNothing);
+      expect(ctrl.offset, greaterThan(bottom - 40));
+
+      // Scroll up again and tap Latest pill -> smoothly reaches bottom and STAYS there!
+      ctrl.jumpTo(0);
+      await tester.pumpAndSettle();
+      expect(find.text('Latest'), findsOneWidget);
+      await tester.tap(find.text('Latest'));
+      await tester.pumpAndSettle();
+      expect(find.text('Latest'), findsNothing);
+      expect(ctrl.offset, closeTo(ctrl.position.maxScrollExtent, 2.0));
     });
   });
 }

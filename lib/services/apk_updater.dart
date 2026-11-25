@@ -137,7 +137,23 @@ class ApkUpdater {
       );
     }
 
-    final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    final Map<String, dynamic> data;
+    try {
+      final decoded = jsonDecode(resp.body);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Expected JSON object');
+      }
+      data = decoded;
+    } catch (_) {
+      return ApkReleaseInfo(
+        currentVersion: currentVersion,
+        latestVersion: currentVersion,
+        hasUpdate: false,
+        releaseUrl: fallbackUrl,
+        matchedAbi: abi,
+        statusMessage: 'Invalid release response from GitHub.',
+      );
+    }
     final rawTag = (data['tag_name'] as String?) ?? currentVersion;
     final latest = normalizeVersion(rawTag);
     final htmlUrl = (data['html_url'] as String?) ?? fallbackUrl;
@@ -258,7 +274,13 @@ class ApkUpdater {
         release.checksumsUrl!,
         release.assetName!,
       );
-      if (expectedHash != null && expectedHash != actualHash) {
+      if (expectedHash == null) {
+        if (await file.exists()) await file.delete();
+        throw const ApkUpdateException(
+          'Could not verify SHA-256 checksum for this APK — please retry.',
+        );
+      }
+      if (expectedHash != actualHash) {
         if (await file.exists()) await file.delete();
         throw const ApkUpdateException(
           'SHA-256 checksum mismatch — download corrupted. Please retry.',

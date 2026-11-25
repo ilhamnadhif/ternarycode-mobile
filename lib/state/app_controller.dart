@@ -52,7 +52,7 @@ class AppController extends ChangeNotifier {
   ApkReleaseInfo? _availableUpdate;
   ApkReleaseInfo? get availableUpdate => _availableUpdate;
 
-  String _appVersion = '0.3.5';
+  String _appVersion = '0.3.6';
   String get appVersion => _appVersion;
 
   bool _bootstrapped = false;
@@ -257,6 +257,12 @@ class AppController extends ChangeNotifier {
         state == AppLifecycleState.hidden) {
       _appInBackground = true;
       _pausedAt = DateTime.now();
+      if (!_settings.keepAlive) {
+        // User disabled background keep-alive: release SSE socket immediately
+        // to save battery/radio, and reconnect seamlessly on resume.
+        _cancelStream();
+        return;
+      }
       // Pause retry timers while backgrounded so OS background network blocks
       // do not inflate backoff to 10-25s before the user returns.
       _reconnectTimer?.cancel();
@@ -676,6 +682,9 @@ class AppController extends ChangeNotifier {
     CompanionSnapshot prev,
     CompanionSnapshot next,
   ) {
+    final activeIds = next.panes.map((p) => p.id).toSet();
+    _notifiedSignatures.removeWhere((id, _) => !activeIds.contains(id));
+
     for (final pane in next.panes) {
       final sig =
           '${pane.status}|${pane.rateLimit?.fromProfile ?? ''}|${pane.message ?? ''}';

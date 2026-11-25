@@ -82,8 +82,14 @@ class NotificationPreviewScreen extends StatelessWidget {
                     label: 'Approve',
                     primary: true,
                     onTap: () {
-                      controller.sendQuickAction(1, 'approve');
-                      controller.focusPane(1);
+                      if (controller.isDemoMode) {
+                        controller.sendQuickAction(1, 'approve');
+                        controller.focusPane(1);
+                      } else {
+                        controller.showToast(
+                          'Preview only — real approvals run from Android notifications',
+                        );
+                      }
                       Navigator.of(context).pop();
                     },
                   ),
@@ -91,14 +97,22 @@ class NotificationPreviewScreen extends StatelessWidget {
                     label: 'Reject',
                     reject: true,
                     onTap: () {
-                      controller.sendQuickAction(1, 'reject');
+                      if (controller.isDemoMode) {
+                        controller.sendQuickAction(1, 'reject');
+                      } else {
+                        controller.showToast(
+                          'Preview only — real rejections run from Android notifications',
+                        );
+                      }
                       Navigator.of(context).pop();
                     },
                   ),
                   _NotifAction(
                     label: 'Open',
                     onTap: () {
-                      controller.focusPane(1);
+                      if (controller.isDemoMode) {
+                        controller.focusPane(1);
+                      }
                       Navigator.of(context).pop();
                     },
                   ),
@@ -115,15 +129,23 @@ class NotificationPreviewScreen extends StatelessWidget {
                     label: 'Resume on claude2',
                     primary: true,
                     onTap: () {
-                      controller.switchProfile(2, 'claude2');
-                      controller.focusPane(2);
+                      if (controller.isDemoMode) {
+                        controller.switchProfile(2, 'claude2');
+                        controller.focusPane(2);
+                      } else {
+                        controller.showToast(
+                          'Preview only — real failover runs from Android notifications',
+                        );
+                      }
                       Navigator.of(context).pop();
                     },
                   ),
                   _NotifAction(
                     label: 'Open',
                     onTap: () {
-                      controller.focusPane(2);
+                      if (controller.isDemoMode) {
+                        controller.focusPane(2);
+                      }
                       Navigator.of(context).pop();
                     },
                   ),

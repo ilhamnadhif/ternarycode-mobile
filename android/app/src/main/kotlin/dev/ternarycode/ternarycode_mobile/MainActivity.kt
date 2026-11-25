@@ -30,7 +30,13 @@ class MainActivity : FlutterFragmentActivity() {
                             result.error("INVALID_PATH", "APK path is empty", null)
                             return@setMethodCallHandler
                         }
-                        val file = File(path)
+                        val updatesDir = File(cacheDir, "updates").canonicalFile
+                        val file = File(path).canonicalFile
+                        val insideUpdates = file.path.startsWith(updatesDir.path + File.separator)
+                        if (!insideUpdates || !file.name.endsWith(".apk", ignoreCase = true)) {
+                            result.error("INVALID_PATH", "APK path outside updates cache", null)
+                            return@setMethodCallHandler
+                        }
                         if (!file.exists()) {
                             result.error("NOT_FOUND", "APK file not found", null)
                             return@setMethodCallHandler

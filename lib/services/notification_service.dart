@@ -177,7 +177,7 @@ class AndroidNotificationService implements NotificationBackend {
     try {
       final supported = await _localAuth.isDeviceSupported();
       final canCheck = await _localAuth.canCheckBiometrics;
-      if (!supported || !canCheck) return true;
+      if (!supported && !canCheck) return false;
       return await _localAuth.authenticate(
         localizedReason: reason,
         options: const AuthenticationOptions(
@@ -186,7 +186,8 @@ class AndroidNotificationService implements NotificationBackend {
         ),
       );
     } catch (_) {
-      return true;
+      // Fail closed when user enabled biometric approval lock.
+      return false;
     }
   }
 }

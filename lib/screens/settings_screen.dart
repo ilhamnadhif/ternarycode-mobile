@@ -291,9 +291,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   expanded: true,
                   onPressed: () async {
                     await ctrl.unpairActiveHost();
-                    if (context.mounted) {
+                    if (!context.mounted) return;
+                    if (!ctrl.isPaired) {
+                      widget.onUnpaired();
+                    } else {
                       Navigator.of(context).pop();
-                      if (!ctrl.isPaired) widget.onUnpaired();
                     }
                   },
                 ),

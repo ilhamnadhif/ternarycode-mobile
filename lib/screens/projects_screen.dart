@@ -364,6 +364,12 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
     final ctrl = widget.controller;
     final host = ctrl.activeHost;
     final snap = ctrl.snapshot;
+    if (_searchCtrl.text != ctrl.projectQuery) {
+      _searchCtrl.value = TextEditingValue(
+        text: ctrl.projectQuery,
+        selection: TextSelection.collapsed(offset: ctrl.projectQuery.length),
+      );
+    }
     final query = ctrl.projectQuery.trim().toLowerCase();
     final selectedPaneId = ctrl.selectedPane?.id;
 
@@ -389,6 +395,20 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             controller: _searchCtrl,
             hint: 'Filter projects, worktrees & agents…',
             prefixIcon: PhosphorIconsRegular.magnifyingGlass,
+            suffixIcon: ctrl.projectQuery.isEmpty
+                ? null
+                : GestureDetector(
+                    onTap: () {
+                      _searchCtrl.clear();
+                      ctrl.setProjectQuery('');
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Icon(
+                      PhosphorIconsRegular.x,
+                      size: 14,
+                      color: c.text3,
+                    ),
+                  ),
             compact: true,
             onChanged: ctrl.setProjectQuery,
           ),

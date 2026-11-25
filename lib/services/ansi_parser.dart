@@ -2,17 +2,29 @@ import 'package:flutter/material.dart';
 import '../theme/slate_tokens.dart';
 
 /// Parsed terminal line with optional full-bleed background wash, subtle edge
-/// inset, and syntax-highlighted monospace spans preserving exact column fidelity.
+/// inset, responsive rule/table hints, and syntax-highlighted monospace spans
+/// preserving exact column fidelity.
 class TerminalLineData {
   const TerminalLineData({
     required this.spans,
     this.background,
     this.isPromptBand = false,
+    this.isHorizontalRule = false,
+    this.isTableLine = false,
   });
 
   final List<TextSpan> spans;
   final Color? background;
   final bool isPromptBand;
+
+  /// True for pure horizontal TUI dividers (e.g. Claude Code / Codex / AGY
+  /// 120-column `───────...` rules) so narrow mobile viewports can render them
+  /// as a single crisp full-width hairline instead of wrapping into 3–4 stacked lines.
+  final bool isHorizontalRule;
+
+  /// True for multi-column box-drawing or pipe-delimited CLI tables so mobile
+  /// can keep contiguous table blocks aligned inside an inline horizontal scroll strip.
+  final bool isTableLine;
 }
 
 /// Renders authentic raw PTY output (both ANSI SGR streams and plain-text
@@ -21,11 +33,16 @@ class TerminalLineData {
 /// highlighting while preserving 100% verbatim text & column alignment.
 class AnsiTerminalParser {
   static final RegExp _sgrRegex = RegExp(r'\x1B\[([0-9;]*)m');
-  static final RegExp _otherEscRegex =
-      RegExp(r'\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-9;?]*[A-LN-Za-ln-z]|\([A-Za-z0-9])');
+  static final RegExp _otherEscRegex = RegExp(
+    r'\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-9;?]*[A-LN-Za-ln-z]|\([A-Za-z0-9])',
+  );
   static final RegExp _diffAddRegex = RegExp(r'^(\s*\d+)(\s+)(\+\s?.*)$');
   static final RegExp _diffDelRegex = RegExp(r'^(\s*\d+)(\s+)(-\s?.*)$');
-  static final RegExp _ruleLineRegex = RegExp(r'^[\s─━═╭╮╰╯┌┐└┘┬┴┼]+$');
+  static final RegExp _ruleLineRegex = RegExp(r'^[\s─━═┄┈╌╍╭╮╰╯┌┐└┘┬┴┼├┤]+$');
+  static final RegExp _pureHorizontalRuleRegex =
+      RegExp(r'^[\s─━═┄┈╌╍╭╮╰╯\-_=·]+$');
+  static final RegExp _hasLongRuleRunRegex = RegExp(r'[─━═┄┈╌╍\-_=]{6,}');
+  static final RegExp _tableJunctionRegex = RegExp(r'[┌┐└┘┬┴┼├┤]');
   static final RegExp _tuiChromeHintRegex = RegExp(
     r'(?:\?\s*for\s+shortcuts|esc\s+to\s+(?:interrupt|cancel)|ctrl\+c\s+to|shift\+tab|alt\+enter|enter\s+to\s+(?:confirm|select|send)|bypass\s+permissions|accept\s+edits|←\s*for\s+agents)',
     caseSensitive: false,
@@ -36,6 +53,14 @@ class AnsiTerminalParser {
   );
   static final RegExp _selectedOptionRegex =
       RegExp(r'^(\s*[│┃]?\s*)([❯›▸→◉])(\s+(?:\d+[.)]\s+|\S).*)$');
+  static final RegExp _numberedChoiceStartRegex = RegExp(r'^\s*\d+[.)]\s+');
+  static final RegExp _wordChoiceStartRegex = RegExp(
+    r'^\s*(?:Yes|No|Allow|Deny|Cancel|Trust|Skip|Approve)',
+    caseSensitive: false,
+  );
+  static final RegExp _leadPromptRegex = RegExp(r'^(\s*)([❯›>])(\s+\S.*)$');
+  static final RegExp _claudeBulletRegex = RegExp(r'^(\s*)(●)(\s+)(.*)$');
+  static final RegExp _cyanBulletRegex = RegExp(r'^(\s*)(•)(\s+)(.*)$');
   static final RegExp _toolVerbRegex = RegExp(
     r'^(\s*)([●•◦✓✔✗✘▸▹]\s*)?((?:Ran|Running|Executed|Explored|Read|Reading|Edited|Editing|Updated|Updating|Created|Wrote|Deleted|Searched|Searching|Checked|Applied|Patched|Built|Tested|Fetched)\s+\S.{0,120}|(?:Bash|Read|Edit|Write|Update|MultiEdit|Grep|Glob|Search|Task|WebFetch|WebSearch|NotebookEdit|Tool)\s*\(.+\))$',
     caseSensitive: false,
@@ -44,6 +69,40 @@ class AnsiTerminalParser {
   static final RegExp _inlineHighlightRegex = RegExp(
     r'(https?://[^\s)\]>]+|`[^`]+`|\*\*[^*]+\*\*)',
   );
+
+  static bool _isPureHorizontalRule(String trimmed) {
+    if (trimmed.length < 6) return false;
+    if (_tableJunctionRegex.hasMatch(trimmed)) return false;
+    return _pureHorizontalRuleRegex.hasMatch(trimmed) &&
+        _hasLongRuleRunRegex.hasMatch(trimmed);
+  }
+
+  static bool _isBoxTableLine(String rawLine, String trimmed) {
+    if (trimmed.isEmpty) return false;
+    if (_tableJunctionRegex.hasMatch(trimmed) &&
+        (trimmed.contains('─') ||
+            trimmed.contains('━') ||
+            trimmed.contains('═'))) {
+      return true;
+    }
+    // Count box pipes `│`/`┃` or Markdown table pipes `|`.
+    var boxPipes = 0;
+    var asciiPipes = 0;
+    for (var i = 0; i < rawLine.length; i++) {
+      final ch = rawLine.codeUnitAt(i);
+      if (ch == 0x2502 || ch == 0x2503) {
+        boxPipes++;
+      } else if (ch == 0x7C) {
+        asciiPipes++;
+      }
+    }
+    if (boxPipes >= 3) return true;
+    if (boxPipes == 2 && trimmed.length >= 44) return true;
+    if (asciiPipes >= 3 && trimmed.startsWith('|') && trimmed.endsWith('|')) {
+      return true;
+    }
+    return false;
+  }
 
   static List<TerminalLineData> parse(
     String raw,
@@ -79,11 +138,14 @@ class AnsiTerminalParser {
       if (hasAnsi) {
         final cleaned = rawLine.replaceAll(_otherEscRegex, '');
         final spans = <TextSpan>[];
+        final plainBuf = StringBuffer();
         var cursor = 0;
         for (final m in _sgrRegex.allMatches(cleaned)) {
           if (m.start > cursor) {
+            final seg = cleaned.substring(cursor, m.start);
+            plainBuf.write(seg);
             spans.add(TextSpan(
-              text: cleaned.substring(cursor, m.start),
+              text: seg,
               style: baseStyle.copyWith(
                 color: dim ? c.termDim : (activeFg ?? c.termFg),
                 backgroundColor: activeBg,
@@ -130,13 +192,15 @@ class AnsiTerminalParser {
               activeFg = _ansi256(codes[i + 2], c);
               i += 2;
             } else if (code == 38 && i + 4 < codes.length && codes[i + 1] == 2) {
-              activeFg = Color.fromARGB(255, codes[i + 2], codes[i + 3], codes[i + 4]);
+              activeFg =
+                  Color.fromARGB(255, codes[i + 2], codes[i + 3], codes[i + 4]);
               i += 4;
             } else if (code == 48 && i + 2 < codes.length && codes[i + 1] == 5) {
               activeBg = _ansi256(codes[i + 2], c)?.withValues(alpha: 0.22);
               i += 2;
             } else if (code == 48 && i + 4 < codes.length && codes[i + 1] == 2) {
-              activeBg = Color.fromARGB(56, codes[i + 2], codes[i + 3], codes[i + 4]);
+              activeBg =
+                  Color.fromARGB(56, codes[i + 2], codes[i + 3], codes[i + 4]);
               i += 4;
             } else {
               final mapped = _ansiColor(code, c);
@@ -149,8 +213,10 @@ class AnsiTerminalParser {
           cursor = m.end;
         }
         if (cursor < cleaned.length) {
+          final seg = cleaned.substring(cursor);
+          plainBuf.write(seg);
           spans.add(TextSpan(
-            text: cleaned.substring(cursor),
+            text: seg,
             style: baseStyle.copyWith(
               color: dim ? c.termDim : (activeFg ?? c.termFg),
               backgroundColor: activeBg,
@@ -161,15 +227,20 @@ class AnsiTerminalParser {
             ),
           ));
         }
+        final plain = plainBuf.toString();
+        final plainTrim = plain.trim();
         result.add(TerminalLineData(
           spans: spans.isEmpty ? [TextSpan(text: ' ', style: baseStyle)] : spans,
+          isHorizontalRule: _isPureHorizontalRule(plainTrim),
+          isTableLine: _isBoxTableLine(plain, plainTrim),
         ));
         continue;
       }
 
       // ── Plain-text semantic styling (matches desktop screen_tail snapshots) ──
       if (rawLine.isEmpty) {
-        result.add(TerminalLineData(spans: [TextSpan(text: ' ', style: baseStyle)]));
+        result.add(
+            TerminalLineData(spans: [TextSpan(text: ' ', style: baseStyle)]));
         continue;
       }
 
@@ -177,12 +248,30 @@ class AnsiTerminalParser {
 
       // 1. Horizontal TUI rules & box borders recede softly instead of glaring
       if (trimmed.length >= 4 && _ruleLineRegex.hasMatch(trimmed)) {
-        result.add(TerminalLineData(spans: [
-          TextSpan(
-            text: rawLine,
-            style: baseStyle.copyWith(color: c.text3.withValues(alpha: 0.45)),
-          ),
-        ]));
+        final isTableBorder = _isBoxTableLine(rawLine, trimmed);
+        final isPureRule = !isTableBorder && _isPureHorizontalRule(trimmed);
+        result.add(TerminalLineData(
+          isHorizontalRule: isPureRule,
+          isTableLine: isTableBorder,
+          spans: [
+            TextSpan(
+              text: rawLine,
+              style: baseStyle.copyWith(color: c.text3.withValues(alpha: 0.45)),
+            ),
+          ],
+        ));
+        continue;
+      }
+      if (_isPureHorizontalRule(trimmed)) {
+        result.add(TerminalLineData(
+          isHorizontalRule: true,
+          spans: [
+            TextSpan(
+              text: rawLine,
+              style: baseStyle.copyWith(color: c.text3.withValues(alpha: 0.45)),
+            ),
+          ],
+        ));
         continue;
       }
 
@@ -279,10 +368,8 @@ class AnsiTerminalParser {
       // 4. Highlighted TUI menu choice (`❯ 1. Yes, I trust this folder`)
       final selOpt = _selectedOptionRegex.firstMatch(rawLine);
       if (selOpt != null &&
-          (RegExp(r'^\s*\d+[.)]\s+').hasMatch(selOpt.group(3)!) ||
-              RegExp(r'^\s*(?:Yes|No|Allow|Deny|Cancel|Trust|Skip|Approve)',
-                      caseSensitive: false)
-                  .hasMatch(selOpt.group(3)!))) {
+          (_numberedChoiceStartRegex.hasMatch(selOpt.group(3)!) ||
+              _wordChoiceStartRegex.hasMatch(selOpt.group(3)!))) {
         result.add(TerminalLineData(
           background: c.accentTint,
           spans: [
@@ -309,7 +396,7 @@ class AnsiTerminalParser {
       }
 
       // 5. User prompt lines (`❯ fix tests`, `> hai`) get a crisp subtle band
-      final leadPrompt = RegExp(r'^(\s*)([❯›>])(\s+\S.*)$').firstMatch(rawLine);
+      final leadPrompt = _leadPromptRegex.firstMatch(rawLine);
       if (leadPrompt != null && !trimmed.startsWith('>>')) {
         result.add(TerminalLineData(
           background: c.raised.withValues(alpha: 0.72),
@@ -342,8 +429,9 @@ class AnsiTerminalParser {
         final bullet = toolM.group(2) ?? '';
         final body = toolM.group(3) ?? '';
         final paren = body.indexOf('(');
-        final isErr =
-            bullet.contains('✗') || bullet.contains('✘') || body.toLowerCase().contains('failed');
+        final isErr = bullet.contains('✗') ||
+            bullet.contains('✘') ||
+            body.toLowerCase().contains('failed');
         final bulletColor = isErr
             ? c.termRed
             : bullet.contains('✓') || bullet.contains('✔')
@@ -381,7 +469,7 @@ class AnsiTerminalParser {
       }
 
       // 7. Bullet points (`● ...`, `• ...`) with inline URL/code/bold highlights
-      final claudeBullet = RegExp(r'^(\s*)(●)(\s+)(.*)$').firstMatch(rawLine);
+      final claudeBullet = _claudeBulletRegex.firstMatch(rawLine);
       if (claudeBullet != null) {
         result.add(TerminalLineData(spans: [
           TextSpan(text: claudeBullet.group(1), style: baseStyle),
@@ -389,11 +477,12 @@ class AnsiTerminalParser {
               text: claudeBullet.group(2),
               style: baseStyle.copyWith(color: c.claude)),
           TextSpan(text: claudeBullet.group(3), style: baseStyle),
-          ..._inlineSpans(claudeBullet.group(4)!, baseStyle.copyWith(color: c.text), c),
+          ..._inlineSpans(
+              claudeBullet.group(4)!, baseStyle.copyWith(color: c.text), c),
         ]));
         continue;
       }
-      final cyanBullet = RegExp(r'^(\s*)(•)(\s+)(.*)$').firstMatch(rawLine);
+      final cyanBullet = _cyanBulletRegex.firstMatch(rawLine);
       if (cyanBullet != null) {
         result.add(TerminalLineData(spans: [
           TextSpan(text: cyanBullet.group(1), style: baseStyle),
@@ -401,7 +490,8 @@ class AnsiTerminalParser {
               text: cyanBullet.group(2),
               style: baseStyle.copyWith(color: c.termCyan)),
           TextSpan(text: cyanBullet.group(3), style: baseStyle),
-          ..._inlineSpans(cyanBullet.group(4)!, baseStyle.copyWith(color: c.text), c),
+          ..._inlineSpans(
+              cyanBullet.group(4)!, baseStyle.copyWith(color: c.text), c),
         ]));
         continue;
       }
@@ -450,9 +540,13 @@ class AnsiTerminalParser {
       if (trimmed.startsWith('└') ||
           trimmed.startsWith('├') ||
           trimmed.startsWith('00:')) {
-        result.add(TerminalLineData(spans: [
-          TextSpan(text: rawLine, style: baseStyle.copyWith(color: c.termDim)),
-        ]));
+        result.add(TerminalLineData(
+          isTableLine: _isBoxTableLine(rawLine, trimmed),
+          spans: [
+            TextSpan(
+                text: rawLine, style: baseStyle.copyWith(color: c.termDim)),
+          ],
+        ));
         continue;
       }
 
@@ -494,9 +588,9 @@ class AnsiTerminalParser {
         continue;
       }
 
-      // 11. Regular text with subtle inline URL / backtick / bold highlights
-      //     and softly muted outer box-drawing pipes `│`
+      // 11. Regular text (or multi-column table row) with inline highlights
       result.add(TerminalLineData(
+        isTableLine: _isBoxTableLine(rawLine, trimmed),
         spans: _styleRegularLine(rawLine, baseStyle, c),
       ));
     }
@@ -511,12 +605,15 @@ class AnsiTerminalParser {
   ) {
     final segments = rawLine.split('·');
     if (segments.length <= 1) {
-      return [TextSpan(text: rawLine, style: baseStyle.copyWith(color: c.termDim))];
+      return [
+        TextSpan(text: rawLine, style: baseStyle.copyWith(color: c.termDim))
+      ];
     }
     final spans = <TextSpan>[];
     for (var i = 0; i < segments.length; i++) {
       if (i > 0) {
-        spans.add(TextSpan(text: '·', style: baseStyle.copyWith(color: c.text3)));
+        spans.add(
+            TextSpan(text: '·', style: baseStyle.copyWith(color: c.text3)));
       }
       final seg = segments[i];
       final st = seg.trim();

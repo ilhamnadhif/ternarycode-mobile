@@ -20,7 +20,9 @@ import 'theme/slate_tokens.dart';
 import 'widgets/host_switcher_sheet.dart';
 
 /// Root TernaryCode Mobile Flutter app wired to the Slate design system.
-class TernaryCodeApp extends StatelessWidget {
+/// Only rebuilds [MaterialApp] and updates Android system bars when `themeMode`
+/// actually changes (never on every incoming SSE terminal frame).
+class TernaryCodeApp extends StatefulWidget {
   const TernaryCodeApp({
     super.key,
     required this.controller,
@@ -31,33 +33,69 @@ class TernaryCodeApp extends StatelessWidget {
   final bool disableCameraForTests;
 
   @override
-  Widget build(BuildContext context) {
-    return ListenableBuilder(
-      listenable: controller,
-      builder: (context, _) {
-        final mode = controller.settings.themeMode;
-        final isDark = mode != ThemeMode.light;
-        SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
-          statusBarColor: Colors.transparent,
-          statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
-          systemNavigationBarColor:
-              isDark ? SlateColors.dark.sheet : SlateColors.light.sheet,
-          systemNavigationBarIconBrightness:
-              isDark ? Brightness.light : Brightness.dark,
-        ));
+  State<TernaryCodeApp> createState() => _TernaryCodeAppState();
+}
 
-        return MaterialApp(
-          title: 'TernaryCode',
-          debugShowCheckedModeBanner: false,
-          theme: SlateTheme.build(Brightness.light),
-          darkTheme: SlateTheme.build(Brightness.dark),
-          themeMode: mode,
-          home: _RootShell(
-            controller: controller,
-            disableCameraForTests: disableCameraForTests,
-          ),
-        );
-      },
+class _TernaryCodeAppState extends State<TernaryCodeApp> {
+  late ThemeMode _themeMode;
+
+  @override
+  void initState() {
+    super.initState();
+    _themeMode = widget.controller.settings.themeMode;
+    _applySystemUi(_themeMode);
+    widget.controller.addListener(_onControllerChanged);
+  }
+
+  @override
+  void didUpdateWidget(covariant TernaryCodeApp oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller.removeListener(_onControllerChanged);
+      widget.controller.addListener(_onControllerChanged);
+      _onControllerChanged();
+    }
+  }
+
+  void _onControllerChanged() {
+    final nextMode = widget.controller.settings.themeMode;
+    if (nextMode != _themeMode) {
+      _themeMode = nextMode;
+      _applySystemUi(_themeMode);
+      if (mounted) setState(() {});
+    }
+  }
+
+  void _applySystemUi(ThemeMode mode) {
+    final isDark = mode != ThemeMode.light;
+    SystemChrome.setSystemUIOverlayStyle(SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: isDark ? Brightness.light : Brightness.dark,
+      systemNavigationBarColor:
+          isDark ? SlateColors.dark.sheet : SlateColors.light.sheet,
+      systemNavigationBarIconBrightness:
+          isDark ? Brightness.light : Brightness.dark,
+    ));
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'TernaryCode',
+      debugShowCheckedModeBanner: false,
+      theme: SlateTheme.build(Brightness.light),
+      darkTheme: SlateTheme.build(Brightness.dark),
+      themeMode: _themeMode,
+      home: _RootShell(
+        controller: widget.controller,
+        disableCameraForTests: widget.disableCameraForTests,
+      ),
     );
   }
 }

@@ -490,6 +490,7 @@ class SlateTextField extends StatelessWidget {
     required this.controller,
     required this.hint,
     this.prefixIcon,
+    this.suffixIcon,
     this.mono = false,
     this.error = false,
     this.compact = false,
@@ -505,6 +506,7 @@ class SlateTextField extends StatelessWidget {
   final TextEditingController controller;
   final String hint;
   final IconData? prefixIcon;
+  final Widget? suffixIcon;
   final bool mono;
   final bool error;
   final bool compact;
@@ -545,6 +547,8 @@ class SlateTextField extends StatelessWidget {
             ? null
             : Icon(prefixIcon, size: 15, color: c.text3),
         prefixIconConstraints: const BoxConstraints(minWidth: 34),
+        suffixIcon: suffixIcon,
+        suffixIconConstraints: const BoxConstraints(minWidth: 32, minHeight: 32),
         isDense: true,
         contentPadding:
             EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 9 : 11),

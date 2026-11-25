@@ -49,6 +49,14 @@ class _TerminalOutputViewState extends State<TerminalOutputView> {
   ScrollController? _ownedController;
   bool _stickToBottom = true;
   bool _scrolledUp = false;
+  bool _jumping = false;
+
+  // Memoized parsed terminal lines so scrolling, toasts, and composer typing
+  // never re-run regex parsing when output/font/theme haven't changed.
+  String? _cachedOutput;
+  double? _cachedFontSize;
+  bool? _cachedIsDark;
+  List<TerminalLineData> _cachedLines = const [];
 
   ScrollController get _scrollCtrl =>
       widget.controller ?? (_ownedController ??= ScrollController());
@@ -71,17 +79,27 @@ class _TerminalOutputViewState extends State<TerminalOutputView> {
       _stickToBottom = true;
       _scrolledUp = false;
       _scheduleScrollToBottom(force: true);
-    } else if (oldWidget.output != widget.output && _stickToBottom) {
+    } else if ((oldWidget.output != widget.output ||
+            oldWidget.wrap != widget.wrap ||
+            oldWidget.fontSize != widget.fontSize) &&
+        _stickToBottom) {
       _scheduleScrollToBottom();
     }
   }
 
   void _handleScroll() {
-    if (!_scrollCtrl.hasClients) return;
+    if (!_scrollCtrl.hasClients || _jumping) return;
     final pos = _scrollCtrl.position;
+    if (pos.maxScrollExtent <= 0) {
+      _stickToBottom = true;
+      if (_scrolledUp && mounted) {
+        setState(() => _scrolledUp = false);
+      }
+      return;
+    }
     final dist = pos.maxScrollExtent - pos.pixels;
-    _stickToBottom = dist <= 72;
-    final up = dist > 84;
+    _stickToBottom = dist <= 64;
+    final up = dist > 72;
     if (up != _scrolledUp && mounted) {
       setState(() => _scrolledUp = up);
     }
@@ -95,17 +113,51 @@ class _TerminalOutputViewState extends State<TerminalOutputView> {
       if (max > 0) {
         _scrollCtrl.jumpTo(max);
       }
+      if (_scrolledUp && mounted) {
+        setState(() => _scrolledUp = false);
+      }
     });
   }
 
-  void _jumpToLatest() {
+  Future<void> _jumpToLatest() async {
     if (!_scrollCtrl.hasClients) return;
     _stickToBottom = true;
-    _scrollCtrl.animateTo(
-      _scrollCtrl.position.maxScrollExtent,
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOut,
+    _jumping = true;
+    if (_scrolledUp && mounted) {
+      setState(() => _scrolledUp = false);
+    }
+    try {
+      await _scrollCtrl.animateTo(
+        _scrollCtrl.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOut,
+      );
+      if (mounted && _scrollCtrl.hasClients) {
+        final max = _scrollCtrl.position.maxScrollExtent;
+        if ((_scrollCtrl.position.pixels - max).abs() > 2) {
+          _scrollCtrl.jumpTo(max);
+        }
+      }
+    } finally {
+      _jumping = false;
+    }
+  }
+
+  List<TerminalLineData> _parsedLines(SlateColors c) {
+    if (_cachedOutput == widget.output &&
+        _cachedFontSize == widget.fontSize &&
+        _cachedIsDark == c.isDark) {
+      return _cachedLines;
+    }
+    _cachedOutput = widget.output;
+    _cachedFontSize = widget.fontSize;
+    _cachedIsDark = c.isDark;
+    _cachedLines = AnsiTerminalParser.parse(
+      widget.output,
+      c,
+      fontSize: widget.fontSize,
     );
+    return _cachedLines;
   }
 
   @override
@@ -113,6 +165,112 @@ class _TerminalOutputViewState extends State<TerminalOutputView> {
     _scrollCtrl.removeListener(_handleScroll);
     _ownedController?.dispose();
     super.dispose();
+  }
+
+  List<Widget> _buildWrappedChildren(
+    List<TerminalLineData> lines,
+    SlateColors c,
+    double hPad,
+  ) {
+    final widgets = <Widget>[];
+    var i = 0;
+    while (i < lines.length) {
+      final line = lines[i];
+
+      // 1. Desktop-width horizontal rules (`────…`) become a single crisp
+      //    phone-width hairline instead of wrapping into 3–4 stacked lines.
+      if (line.isHorizontalRule) {
+        widgets.add(
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 5),
+            child: Container(
+              height: 1,
+              color: c.line,
+            ),
+          ),
+        );
+        i++;
+        continue;
+      }
+
+      // 2. Contiguous multi-column box/pipe tables stay column-aligned inside
+      //    an inline horizontally scrollable strip while prose still wraps.
+      if (line.isTableLine) {
+        final block = <TerminalLineData>[];
+        while (i < lines.length && lines[i].isTableLine) {
+          block.add(lines[i]);
+          i++;
+        }
+        if (block.length >= 2) {
+          widgets.add(
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: hPad, vertical: 4),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: c.hover,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: c.lineSubtle),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 6,
+                  ),
+                  child: IntrinsicWidth(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        for (final row in block)
+                          Container(
+                            color: row.background,
+                            padding: const EdgeInsets.symmetric(vertical: 0.5),
+                            child: Text.rich(
+                              TextSpan(children: row.spans),
+                              softWrap: false,
+                              overflow: TextOverflow.visible,
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+          continue;
+        }
+        // Single stray box line falls through to regular line rendering.
+        for (final row in block) {
+          widgets.add(_buildRegularLine(row, hPad, wrap: true));
+        }
+        continue;
+      }
+
+      widgets.add(_buildRegularLine(line, hPad, wrap: true));
+      i++;
+    }
+    return widgets;
+  }
+
+  Widget _buildRegularLine(
+    TerminalLineData line,
+    double hPad, {
+    required bool wrap,
+  }) {
+    return Container(
+      color: line.background,
+      padding: EdgeInsets.symmetric(
+        horizontal: hPad,
+        vertical: line.isPromptBand ? 2.5 : 0.5,
+      ),
+      child: Text.rich(
+        TextSpan(children: line.spans),
+        softWrap: wrap,
+        overflow: wrap ? TextOverflow.visible : TextOverflow.clip,
+      ),
+    );
   }
 
   @override
@@ -155,133 +313,138 @@ class _TerminalOutputViewState extends State<TerminalOutputView> {
       );
     }
 
-    final lines = AnsiTerminalParser.parse(
-      widget.output,
-      c,
-      fontSize: widget.fontSize,
-    );
-
+    final lines = _parsedLines(c);
     final verticalPad = widget.padding.resolve(TextDirection.ltr);
     final hPad = verticalPad.left;
 
-    final column = SelectionArea(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          for (final line in lines)
-            Container(
-              color: line.background,
-              padding: EdgeInsets.symmetric(
-                horizontal: hPad,
-                vertical: line.isPromptBand ? 2.5 : 0.5,
-              ),
-              child: Text.rich(
-                TextSpan(children: line.spans),
-                softWrap: widget.wrap,
-                overflow:
-                    widget.wrap ? TextOverflow.visible : TextOverflow.clip,
-              ),
-            ),
-          if (widget.isRunning)
-            Padding(
-              padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 2),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  SizedBox(
-                    width: 10,
-                    height: 10,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 1.5,
-                      color: c.running,
+    final runningFooter = widget.isRunning
+        ? Padding(
+            padding: EdgeInsets.fromLTRB(hPad, 10, hPad, 2),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 10,
+                  height: 10,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.5,
+                    color: c.running,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    widget.runningMessage != null &&
+                            widget.runningMessage!.isNotEmpty
+                        ? widget.runningMessage!
+                        : '${widget.agentLabel ?? 'Agent'} is working…',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: SlateTypography.data(
+                      c,
+                      size: 11,
+                      color: c.text2,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  Flexible(
-                    child: Text(
-                      widget.runningMessage != null &&
-                              widget.runningMessage!.isNotEmpty
-                          ? widget.runningMessage!
-                          : '${widget.agentLabel ?? 'Agent'} is working…',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: SlateTypography.data(
-                        c,
-                        size: 11,
-                        color: c.text2,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+              ],
             ),
-        ],
-      ),
-    );
+          )
+        : null;
 
-    final Widget scrollBody = !widget.wrap
-        ? SingleChildScrollView(
-            controller: _scrollCtrl,
-            padding: EdgeInsets.only(
-                top: verticalPad.top, bottom: verticalPad.bottom),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: IntrinsicWidth(child: column),
+    final Widget innerContent = widget.wrap
+        ? SelectionArea(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ..._buildWrappedChildren(lines, c, hPad),
+                ?runningFooter,
+              ],
             ),
           )
         : SingleChildScrollView(
-            controller: _scrollCtrl,
-            padding: EdgeInsets.only(
-                top: verticalPad.top, bottom: verticalPad.bottom),
-            child: column,
-          );
-
-    if (!widget.showLatestPill || !_scrolledUp) {
-      return scrollBody;
-    }
-
-    return Stack(
-      children: [
-        Positioned.fill(child: scrollBody),
-        Positioned(
-          right: 12,
-          bottom: 12,
-          child: Material(
-            color: Colors.transparent,
-            child: InkWell(
-              onTap: _jumpToLatest,
-              borderRadius: BorderRadius.circular(14),
-              child: Ink(
-                height: 28,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color: c.raised,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: c.lineStrong),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withValues(alpha: 0.28),
-                      blurRadius: 10,
-                    ),
+            scrollDirection: Axis.horizontal,
+            child: IntrinsicWidth(
+              child: SelectionArea(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (final line in lines)
+                      _buildRegularLine(line, hPad, wrap: false),
+                    ?runningFooter,
                   ],
                 ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(PhosphorIconsRegular.arrowDown,
-                        size: 12, color: c.text),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Latest',
-                      style: SlateTypography.data(c,
-                          size: 11, color: c.text, weight: FontWeight.w500),
-                    ),
-                  ],
+              ),
+            ),
+          );
+
+    // IMPORTANT: Keep a stable Stack -> Positioned.fill -> SingleChildScrollView
+    // tree regardless of `_scrolledUp` or `widget.wrap` so Flutter NEVER unmounts
+    // the ScrollPosition and resets scroll offset back to 0.0 when reaching bottom.
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: NotificationListener<ScrollMetricsNotification>(
+            onNotification: (n) {
+              if (_stickToBottom && !_jumping && _scrollCtrl.hasClients) {
+                final max = n.metrics.maxScrollExtent;
+                if (max > 0 && (n.metrics.pixels - max).abs() > 2) {
+                  _scheduleScrollToBottom();
+                }
+              }
+              return false;
+            },
+            child: SingleChildScrollView(
+              controller: _scrollCtrl,
+              physics: const ClampingScrollPhysics(),
+              padding: EdgeInsets.only(
+                top: verticalPad.top,
+                bottom: verticalPad.bottom,
+              ),
+              child: innerContent,
+            ),
+          ),
+        ),
+        if (widget.showLatestPill && _scrolledUp)
+          Positioned(
+            right: 12,
+            bottom: 12,
+            child: Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: _jumpToLatest,
+                borderRadius: BorderRadius.circular(14),
+                child: Ink(
+                  height: 28,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  decoration: BoxDecoration(
+                    color: c.raised,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: c.lineStrong),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.28),
+                        blurRadius: 10,
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(PhosphorIconsRegular.arrowDown,
+                          size: 12, color: c.text),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Latest',
+                        style: SlateTypography.data(c,
+                            size: 11, color: c.text, weight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
-        ),
       ],
     );
   }

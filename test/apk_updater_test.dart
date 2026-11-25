@@ -56,10 +56,12 @@ void main() {
     final fakeApkBytes = utf8.encode('PK\x03\x04fake-signed-android-apk-payload');
     late String validSha;
     bool serveCorruptChecksum = false;
+    bool failChecksumEndpoint = false;
 
     setUp(() async {
       validSha = sha256.convert(fakeApkBytes).toString();
       serveCorruptChecksum = false;
+      failChecksumEndpoint = false;
       server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
       baseUrl = 'http://127.0.0.1:${server.port}';
 
@@ -97,6 +99,11 @@ void main() {
           return;
         }
         if (path == '/dl/SHA256SUMS.txt') {
+          if (failChecksumEndpoint) {
+            req.response.statusCode = 500;
+            await req.response.close();
+            return;
+          }
           final hash = serveCorruptChecksum
               ? 'f' * 64
               : validSha;
@@ -147,6 +154,27 @@ void main() {
       serveCorruptChecksum = true;
       final updater = ApkUpdater(apiBaseUrl: baseUrl);
       final tmp = await Directory.systemTemp.createTemp('tc_upd_bad_');
+      addTearDown(() async {
+        updater.dispose();
+        if (await tmp.exists()) await tmp.delete(recursive: true);
+      });
+
+      final info = await updater.checkForUpdate('0.1.0', abiOverride: 'arm64-v8a');
+      await expectLater(
+        updater.downloadAndVerify(info, targetDir: tmp),
+        throwsA(isA<ApkUpdateException>()),
+      );
+
+      final updatesDir = Directory('${tmp.path}/updates');
+      final remaining = await updatesDir.list().toList();
+      expect(remaining, isEmpty);
+    });
+
+    test('fails closed and deletes APK when SHA256SUMS.txt cannot be fetched',
+        () async {
+      failChecksumEndpoint = true;
+      final updater = ApkUpdater(apiBaseUrl: baseUrl);
+      final tmp = await Directory.systemTemp.createTemp('tc_upd_err_');
       addTearDown(() async {
         updater.dispose();
         if (await tmp.exists()) await tmp.delete(recursive: true);

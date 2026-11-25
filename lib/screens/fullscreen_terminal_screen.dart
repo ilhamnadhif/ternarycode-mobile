@@ -28,38 +28,10 @@ class FullscreenTerminalScreen extends StatefulWidget {
 }
 
 class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
-  final ScrollController _scrollCtrl = ScrollController();
   final TextEditingController _promptCtrl = TextEditingController();
-  bool _showLatestPill = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _scrollCtrl.addListener(_onScroll);
-  }
-
-  void _onScroll() {
-    if (!_scrollCtrl.hasClients) return;
-    final distFromBottom =
-        _scrollCtrl.position.maxScrollExtent - _scrollCtrl.offset;
-    final show = distFromBottom > 48;
-    if (show != _showLatestPill) {
-      setState(() => _showLatestPill = show);
-    }
-  }
-
-  void _scrollToBottom() {
-    if (!_scrollCtrl.hasClients) return;
-    _scrollCtrl.animateTo(
-      _scrollCtrl.position.maxScrollExtent,
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOut,
-    );
-  }
 
   @override
   void dispose() {
-    _scrollCtrl.dispose();
     _promptCtrl.dispose();
     super.dispose();
   }
@@ -171,68 +143,19 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
 
                 // Edge-to-edge polished raw terminal canvas
                 Expanded(
-                  child: Container(
+                  child: ColoredBox(
                     color: isDark ? c.inset : c.sheet,
-                    child: Stack(
-                      children: [
-                        Positioned.fill(
-                          child: TerminalOutputView(
-                            paneId: pane?.id,
-                            agentLabel: pane?.label,
-                            isRunning: pane != null &&
-                                pane.status == 'running' &&
-                                pane.rateLimit == null,
-                            runningMessage: pane?.message,
-                            controller: _scrollCtrl,
-                            output: pane?.output ?? '',
-                            fontSize: settings.termFontSize,
-                            wrap: settings.termWrap,
-                            showLatestPill: false,
-                          ),
-                        ),
-                        if (_showLatestPill)
-                          Positioned(
-                            right: 14,
-                            bottom: 14,
-                            child: Material(
-                              color: Colors.transparent,
-                              child: InkWell(
-                                onTap: _scrollToBottom,
-                                borderRadius: BorderRadius.circular(14),
-                                child: Ink(
-                                  height: 28,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 11),
-                                  decoration: BoxDecoration(
-                                    color: c.raised,
-                                    borderRadius: BorderRadius.circular(14),
-                                    border: Border.all(color: c.lineStrong),
-                                    boxShadow: [
-                                      BoxShadow(
-                                        color:
-                                            Colors.black.withValues(alpha: 0.3),
-                                        blurRadius: 12,
-                                      ),
-                                    ],
-                                  ),
-                                  child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      Icon(PhosphorIconsRegular.arrowDown,
-                                          size: 12, color: c.text),
-                                      const SizedBox(width: 4),
-                                      Text(
-                                        'Latest output',
-                                        style: SlateTypography.data(c,
-                                            color: c.text),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ),
-                      ],
+                    child: TerminalOutputView(
+                      paneId: pane?.id,
+                      agentLabel: pane?.label,
+                      isRunning: pane != null &&
+                          pane.status == 'running' &&
+                          pane.rateLimit == null,
+                      runningMessage: pane?.message,
+                      output: pane?.output ?? '',
+                      fontSize: settings.termFontSize,
+                      wrap: settings.termWrap,
+                      showLatestPill: true,
                     ),
                   ),
                 ),
