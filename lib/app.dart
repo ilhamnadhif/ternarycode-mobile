@@ -62,7 +62,7 @@ class TernaryCodeApp extends StatelessWidget {
   }
 }
 
-class _RootShell extends StatelessWidget {
+class _RootShell extends StatefulWidget {
   const _RootShell({
     required this.controller,
     required this.disableCameraForTests,
@@ -70,6 +70,31 @@ class _RootShell extends StatelessWidget {
 
   final AppController controller;
   final bool disableCameraForTests;
+
+  @override
+  State<_RootShell> createState() => _RootShellState();
+}
+
+class _RootShellState extends State<_RootShell> with WidgetsBindingObserver {
+  AppController get controller => widget.controller;
+  bool get disableCameraForTests => widget.disableCameraForTests;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    controller.onAppLifecycleChanged(state);
+  }
 
   void _openQrScanner(BuildContext context) {
     Navigator.of(context).push(

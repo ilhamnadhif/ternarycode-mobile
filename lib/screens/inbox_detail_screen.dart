@@ -239,9 +239,23 @@ class InboxDetailScreen extends StatelessWidget {
                     children: [
                       const SlateSectionLabel('Last lines'),
                       const Spacer(),
-                      Text(
-                        '● live',
-                        style: SlateTypography.data(c, color: c.accentText),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Container(
+                            width: 6,
+                            height: 6,
+                            decoration: BoxDecoration(
+                              color: c.accentText,
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 5),
+                          Text(
+                            'live',
+                            style: SlateTypography.data(c, color: c.accentText),
+                          ),
+                        ],
                       ),
                     ],
                   ),

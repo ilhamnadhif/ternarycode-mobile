@@ -169,32 +169,59 @@ class CompanionApi {
   }
 
   /// Opens a persistent Server-Sent Events stream to `GET /api/events`.
+  /// Includes a staleness watchdog so half-open Wi-Fi sockets self-heal automatically.
   Stream<CompanionSnapshot> subscribeEvents({
     required String baseUrl,
     required String token,
+    void Function()? onKeepAlive,
+    Duration watchdogTimeout = const Duration(seconds: 35),
   }) {
     late StreamController<CompanionSnapshot> controller;
     HttpClient? ioClient;
     StreamSubscription<String>? lineSub;
+    Timer? watchdog;
     var closed = false;
 
     void cleanup() {
       closed = true;
+      watchdog?.cancel();
+      watchdog = null;
       lineSub?.cancel();
       lineSub = null;
       ioClient?.close(force: true);
       ioClient = null;
     }
 
+    void bumpWatchdog() {
+      if (closed || watchdogTimeout <= Duration.zero) return;
+      watchdog?.cancel();
+      watchdog = Timer(watchdogTimeout, () {
+        if (!closed) {
+          controller.addError(
+            const CompanionApiException(
+              'Event stream stalled (no keepalive)',
+              isNetwork: true,
+            ),
+          );
+          controller.close();
+          cleanup();
+        }
+      });
+    }
+
     controller = StreamController<CompanionSnapshot>(
       onListen: () async {
-        ioClient = HttpClient()..connectionTimeout = _timeout;
+        ioClient = HttpClient()
+          ..connectionTimeout = _timeout
+          ..autoUncompress = false;
         try {
           final uri = Uri.parse('${_cleanBase(baseUrl)}/api/events');
           final req = await ioClient!.getUrl(uri);
+          req.bufferOutput = false;
           req.headers.set('Authorization', 'Bearer $token');
           req.headers.set('Accept', 'text/event-stream');
           req.headers.set('Cache-Control', 'no-cache');
+          req.headers.set('Connection', 'keep-alive');
           final resp = await req.close().timeout(_timeout);
 
           if (resp.statusCode == 401) {
@@ -221,12 +248,18 @@ class CompanionApi {
             return;
           }
 
+          bumpWatchdog();
           lineSub = resp
               .transform(utf8.decoder)
               .transform(const LineSplitter())
               .listen(
             (line) {
               if (closed) return;
+              bumpWatchdog();
+              if (line.startsWith(':')) {
+                onKeepAlive?.call();
+                return;
+              }
               if (line.startsWith('data:')) {
                 final payload = line.substring(5).trim();
                 if (payload.isEmpty || payload == '{}') return;
@@ -365,17 +398,36 @@ class CompanionApi {
 
   /// Probes local Wi-Fi `/24` subnet on port 7890 for running TernaryCode desktops.
   Future<List<DiscoveredHost>> discoverLanHosts({int port = 7890}) async {
-    final prefixes = <String>{};
+    final candidates = <(int score, String prefix)>[];
+    final seen = <String>{};
     try {
       final ifaces = await NetworkInterface.list(
         type: InternetAddressType.IPv4,
         includeLoopback: false,
       );
       for (final iface in ifaces) {
+        final lname = iface.name.toLowerCase();
+        final isVpn = lname.startsWith('tun') ||
+            lname.startsWith('utun') ||
+            lname.startsWith('wg') ||
+            lname.startsWith('ppp') ||
+            lname.startsWith('rmnet');
+        final isWifi = lname.startsWith('wlan') ||
+            lname.startsWith('en') ||
+            lname.startsWith('eth');
         for (final addr in iface.addresses) {
           final parts = addr.address.split('.');
-          if (parts.length == 4) {
-            prefixes.add('${parts[0]}.${parts[1]}.${parts[2]}');
+          if (parts.length != 4) continue;
+          final o0 = int.tryParse(parts[0]) ?? 0;
+          final o1 = int.tryParse(parts[1]) ?? 0;
+          final isPrivate = o0 == 192 && o1 == 168 ||
+              o0 == 10 ||
+              (o0 == 172 && o1 >= 16 && o1 <= 31);
+          if (!isPrivate || isVpn) continue;
+          final prefix = '${parts[0]}.${parts[1]}.${parts[2]}';
+          if (seen.add(prefix)) {
+            final score = (isWifi ? 10 : 0) + (o0 == 192 ? 3 : (o0 == 10 ? 2 : 1));
+            candidates.add((score, prefix));
           }
         }
       }
@@ -383,9 +435,10 @@ class CompanionApi {
       return const [];
     }
 
-    if (prefixes.isEmpty) return const [];
+    if (candidates.isEmpty) return const [];
+    candidates.sort((a, b) => b.$1.compareTo(a.$1));
     final found = <DiscoveredHost>[];
-    final prefix = prefixes.first;
+    final prefix = candidates.first.$2;
 
     // Probe subnet in parallel chunks to stay responsive (< 1.5s total).
     const chunkSize = 32;

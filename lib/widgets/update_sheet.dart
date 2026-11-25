@@ -173,7 +173,7 @@ class _ApkUpdateSheetBodyState extends State<_ApkUpdateSheetBody> {
               ),
               SlateTag(
                 label: r.hasUpdate
-                    ? 'v${r.currentVersion} → v${r.latestVersion}'
+                    ? 'v${r.currentVersion} -> v${r.latestVersion}'
                     : 'v${r.currentVersion}',
                 fg: r.hasUpdate ? c.accentText : c.done,
                 bg: r.hasUpdate ? c.accentTint : c.doneTint,

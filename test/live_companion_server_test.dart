@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ternarycode_mobile/services/companion_api.dart';
 import 'package:ternarycode_mobile/services/notification_service.dart';
@@ -163,6 +164,7 @@ void main() {
         receivedActions.add({
           'path': path,
           'body': jsonDecode(bodyStr),
+          'ts': DateTime.now().millisecondsSinceEpoch,
         });
         req.response
           ..statusCode = 200
@@ -193,6 +195,7 @@ void main() {
       api: CompanionApi(),
       storage: storage,
       notifications: notifications,
+      enterDelay: const Duration(milliseconds: 60),
     );
     await ctrl.init();
 
@@ -239,9 +242,11 @@ void main() {
     expect(ctrl.snapshot.panes.first.status, 'needs_input');
     expect(notifications.sentAlerts, contains('approve:1:storefront'));
 
-    // 4. Send Approve, text prompt, switch-profile, resume-session, and spawn-agent
+    // 4. Send Approve, text prompt (must split text + delayed Enter to avoid TUI paste-burst newline!),
+    //    standalone Enter key, switch-profile, resume-session, and spawn-agent.
     await ctrl.sendQuickAction(1, 'approve');
-    await ctrl.sendTerminalInput(1, 'run tests', enter: true);
+    await ctrl.sendTerminalInput(1, 'run tests\n', enter: true);
+    await ctrl.sendTerminalInput(1, '', enter: true);
     await ctrl.switchProfile(1, 'claude2');
     await ctrl.resumeSession(
       project: ctrl.snapshot.projects.first,
@@ -253,25 +258,122 @@ void main() {
       profileId: 'claude2',
     );
 
-    expect(receivedActions.length, 5);
+    expect(receivedActions.length, 7);
     expect(receivedActions[0]['path'], '/api/pane/1/input');
     expect(receivedActions[0]['body'], {'action': 'approve'});
-    expect(receivedActions[1]['body'], {'text': 'run tests', 'enter': true});
-    expect(receivedActions[2]['path'], '/api/pane/1/switch-profile');
-    expect(receivedActions[2]['body'], {'profile_id': 'claude2'});
-    expect(receivedActions[3]['path'], '/api/session/resume');
-    expect(receivedActions[3]['body']['session_id'], 'sess-99');
-    expect(receivedActions[4]['path'], '/api/pane/spawn');
-    expect(receivedActions[4]['body'], {
+    // Prompt text sent first with enter: false, trailing newline trimmed
+    expect(receivedActions[1]['path'], '/api/pane/1/input');
+    expect(receivedActions[1]['body'], {'text': 'run tests', 'enter': false});
+    // Standalone Enter sent after enterDelay so Codex/Claude TUIs submit cleanly
+    expect(receivedActions[2]['path'], '/api/pane/1/input');
+    expect(receivedActions[2]['body'], {'text': '', 'enter': true});
+    final gapMs = (receivedActions[2]['ts'] as int) -
+        (receivedActions[1]['ts'] as int);
+    expect(gapMs, greaterThanOrEqualTo(45));
+    // Standalone Enter quick key sends one single request
+    expect(receivedActions[3]['path'], '/api/pane/1/input');
+    expect(receivedActions[3]['body'], {'text': '', 'enter': true});
+    expect(receivedActions[4]['path'], '/api/pane/1/switch-profile');
+    expect(receivedActions[4]['body'], {'profile_id': 'claude2'});
+    expect(receivedActions[5]['path'], '/api/session/resume');
+    expect(receivedActions[5]['body']['session_id'], 'sess-99');
+    expect(receivedActions[6]['path'], '/api/pane/spawn');
+    expect(receivedActions[6]['body'], {
       'project_id': 1,
       'agent': 'claude',
       'profile_id': 'claude2',
     });
 
-    // 5. Revoke token on server and retry -> enters ConnectionPhase.revoked
+    // 5. Revoke token on server and retry -> enters ConnectionPhase.revoked & shows offline wall
     tokenRevoked = true;
     await ctrl.retryConnection();
     expect(ctrl.phase, ConnectionPhase.revoked);
+    expect(ctrl.showOfflineWall, isTrue);
+
+    ctrl.dispose();
+  });
+
+  test('silently heals transient SSE drops without offline wall and reconnects on app resume', () async {
+    final storage = InMemoryStorageService();
+    final notifications = NoopNotificationService();
+    final ctrl = AppController(
+      api: CompanionApi(),
+      storage: storage,
+      notifications: notifications,
+    );
+    await ctrl.init();
+
+    final err = await ctrl.pairHost(
+      rawUrl: baseUrl,
+      code: expectedPairCode,
+      deviceName: 'Xiaomi Test',
+    );
+    expect(err, isNull);
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    expect(sseSinks.length, 1);
+
+    // 1. Keepalive comment keeps stream healthy
+    sseSinks.first.add(utf8.encode(': keepalive\n\n'));
+    await sseSinks.first.flush();
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+    expect(ctrl.phase, ConnectionPhase.connected);
+    expect(ctrl.showOfflineWall, isFalse);
+
+    // 2. Simulate transient SSE socket drop -> soft reconnect (no full-screen Retry now!)
+    await sseSinks.first.close();
+    sseSinks.clear();
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    expect(ctrl.showOfflineWall, isFalse);
+
+    // First auto-retry fires at 350ms and restores live SSE seamlessly
+    await Future<void>.delayed(const Duration(milliseconds: 700));
+    expect(ctrl.phase, ConnectionPhase.connected);
+    expect(ctrl.showOfflineWall, isFalse);
+    expect(sseSinks.length, 1);
+
+    // 3. Simulate Android backgrounding + OS killing background TCP socket -> resume heals immediately
+    ctrl.onAppLifecycleChanged(AppLifecycleState.paused);
+    await sseSinks.first.close();
+    sseSinks.clear();
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    expect(ctrl.phase, ConnectionPhase.reconnecting);
+    // While paused, it does NOT spam reconnects
+    expect(sseSinks, isEmpty);
+
+    // Returning to foreground immediately reconnects with zero manual Retry click
+    ctrl.onAppLifecycleChanged(AppLifecycleState.resumed);
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    expect(ctrl.phase, ConnectionPhase.connected);
+    expect(ctrl.showOfflineWall, isFalse);
+    expect(sseSinks.length, 1);
+
+    // 4. Resuming a historical session auto-focuses the newly created pane via SSE
+    await ctrl.resumeSession(
+      project: ctrl.snapshot.projects.first,
+      session: ctrl.snapshot.projects.first.sessions.first,
+    );
+    final withResumedPane = Map<String, dynamic>.from(currentSnapshot);
+    withResumedPane['panes'] = [
+      ...(currentSnapshot['panes'] as List),
+      {
+        'id': 2,
+        'project_id': 1,
+        'project_name': 'storefront',
+        'label': 'Claude Code',
+        'branch': 'main',
+        'provider': 'Claude Code',
+        'profile': 'claude2',
+        'supports_profiles': true,
+        'status': 'running',
+        'status_label': 'Running',
+        'message': 'Resumed session',
+        'output': 'Resuming Fix checkout tax…',
+        'rate_limit': null,
+      }
+    ];
+    pushSse(withResumedPane);
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(ctrl.selectedPane?.id, 2);
 
     ctrl.dispose();
   });

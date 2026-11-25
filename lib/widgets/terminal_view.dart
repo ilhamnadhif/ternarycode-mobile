@@ -8,11 +8,13 @@ import '../theme/slate_theme.dart';
 import '../theme/slate_tokens.dart';
 import 'slate_widgets.dart';
 
-/// Renders parsed ANSI & diff terminal output cleanly with optional line wrap.
-class TerminalOutputView extends StatelessWidget {
+/// Renders parsed ANSI & diff terminal output cleanly with optional line wrap
+/// and smart auto-scroll to bottom (tracks new output without fighting manual scroll-up).
+class TerminalOutputView extends StatefulWidget {
   const TerminalOutputView({
     super.key,
     required this.output,
+    this.paneId,
     this.fontSize = 11.5,
     this.wrap = true,
     this.controller,
@@ -20,18 +22,76 @@ class TerminalOutputView extends StatelessWidget {
   });
 
   final String output;
+  final int? paneId;
   final double fontSize;
   final bool wrap;
   final ScrollController? controller;
   final EdgeInsetsGeometry padding;
 
   @override
+  State<TerminalOutputView> createState() => _TerminalOutputViewState();
+}
+
+class _TerminalOutputViewState extends State<TerminalOutputView> {
+  ScrollController? _ownedController;
+  bool _stickToBottom = true;
+
+  ScrollController get _scrollCtrl =>
+      widget.controller ?? (_ownedController ??= ScrollController());
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollCtrl.addListener(_handleScroll);
+    _scheduleScrollToBottom(force: true);
+  }
+
+  @override
+  void didUpdateWidget(covariant TerminalOutputView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.controller != widget.controller) {
+      oldWidget.controller?.removeListener(_handleScroll);
+      _scrollCtrl.addListener(_handleScroll);
+    }
+    if (oldWidget.paneId != widget.paneId) {
+      _stickToBottom = true;
+      _scheduleScrollToBottom(force: true);
+    } else if (oldWidget.output != widget.output && _stickToBottom) {
+      _scheduleScrollToBottom();
+    }
+  }
+
+  void _handleScroll() {
+    if (!_scrollCtrl.hasClients) return;
+    final pos = _scrollCtrl.position;
+    _stickToBottom = (pos.maxScrollExtent - pos.pixels) <= 72;
+  }
+
+  void _scheduleScrollToBottom({bool force = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollCtrl.hasClients) return;
+      if (!force && !_stickToBottom) return;
+      final max = _scrollCtrl.position.maxScrollExtent;
+      if (max > 0) {
+        _scrollCtrl.jumpTo(max);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _scrollCtrl.removeListener(_handleScroll);
+    _ownedController?.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     final c = context.slate;
     final lines = AnsiTerminalParser.parse(
-      output.isEmpty ? 'Waiting for terminal output…' : output,
+      widget.output.isEmpty ? 'Waiting for terminal output…' : widget.output,
       c,
-      fontSize: fontSize,
+      fontSize: widget.fontSize,
     );
 
     final column = Column(
@@ -43,19 +103,21 @@ class TerminalOutputView extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12),
             child: Text.rich(
               TextSpan(children: line.spans),
-              softWrap: wrap,
-              overflow: wrap ? TextOverflow.visible : TextOverflow.clip,
+              softWrap: widget.wrap,
+              overflow:
+                  widget.wrap ? TextOverflow.visible : TextOverflow.clip,
             ),
           ),
       ],
     );
 
-    final verticalPad = padding.resolve(TextDirection.ltr);
+    final verticalPad = widget.padding.resolve(TextDirection.ltr);
 
-    if (!wrap) {
+    if (!widget.wrap) {
       return SingleChildScrollView(
-        controller: controller,
-        padding: EdgeInsets.only(top: verticalPad.top, bottom: verticalPad.bottom),
+        controller: _scrollCtrl,
+        padding:
+            EdgeInsets.only(top: verticalPad.top, bottom: verticalPad.bottom),
         child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: IntrinsicWidth(child: column),
@@ -64,8 +126,9 @@ class TerminalOutputView extends StatelessWidget {
     }
 
     return SingleChildScrollView(
-      controller: controller,
-      padding: EdgeInsets.only(top: verticalPad.top, bottom: verticalPad.bottom),
+      controller: _scrollCtrl,
+      padding:
+          EdgeInsets.only(top: verticalPad.top, bottom: verticalPad.bottom),
       child: column,
     );
   }
@@ -166,6 +229,7 @@ class TerminalSheet extends StatelessWidget {
             ),
           Expanded(
             child: TerminalOutputView(
+              paneId: pane.id,
               output: pane.output,
               fontSize: fontSize,
               wrap: wrap,
@@ -216,9 +280,19 @@ class QuickKeysStrip extends StatelessWidget {
           const SizedBox(width: 5),
           _KeyChip(label: 'Tab', onTap: onTab),
           const SizedBox(width: 5),
-          _KeyChip(label: '↑', onTap: onUp),
+          _KeyChip(
+            icon: PhosphorIconsRegular.arrowUp,
+            label: '',
+            tooltip: 'Arrow Up',
+            onTap: onUp,
+          ),
           const SizedBox(width: 5),
-          _KeyChip(label: '↓', onTap: onDown),
+          _KeyChip(
+            icon: PhosphorIconsRegular.arrowDown,
+            label: '',
+            tooltip: 'Arrow Down',
+            onTap: onDown,
+          ),
           if (onCopy != null) ...[
             const SizedBox(width: 5),
             _KeyChip(label: 'Copy', onTap: onCopy!),
@@ -234,19 +308,21 @@ class _KeyChip extends StatelessWidget {
     required this.label,
     required this.onTap,
     this.icon,
+    this.tooltip,
     this.warn = false,
   });
 
   final String label;
   final VoidCallback onTap;
   final IconData? icon;
+  final String? tooltip;
   final bool warn;
 
   @override
   Widget build(BuildContext context) {
     final c = context.slate;
     final fg = warn ? c.failed : c.text2;
-    return Material(
+    final chip = Material(
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
@@ -266,22 +342,24 @@ class _KeyChip extends StatelessWidget {
             children: [
               if (icon != null) ...[
                 Icon(icon, size: 12, color: fg),
-                const SizedBox(width: 4),
+                if (label.isNotEmpty) const SizedBox(width: 4),
               ],
-              Text(
-                label,
-                style: SlateTypography.data(
-                  c,
-                  size: 11,
-                  color: fg,
-                  weight: warn ? FontWeight.w500 : FontWeight.w400,
+              if (label.isNotEmpty)
+                Text(
+                  label,
+                  style: SlateTypography.data(
+                    c,
+                    size: 11,
+                    color: fg,
+                    weight: warn ? FontWeight.w500 : FontWeight.w400,
+                  ),
                 ),
-              ),
             ],
           ),
         ),
       ),
     );
+    return tooltip == null ? chip : Tooltip(message: tooltip!, child: chip);
   }
 }
 

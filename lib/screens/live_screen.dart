@@ -73,8 +73,9 @@ class _LiveScreenState extends State<LiveScreen> {
     final snap = ctrl.snapshot;
     final pane = ctrl.selectedPane;
 
-    final isUnreachable = ctrl.phase == ConnectionPhase.reconnecting ||
-        ctrl.phase == ConnectionPhase.revoked;
+    final showOfflineWall = ctrl.showOfflineWall;
+    final softReconnecting = ctrl.isSoftReconnecting;
+    final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 100;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
@@ -93,7 +94,7 @@ class _LiveScreenState extends State<LiveScreen> {
           ),
           const SizedBox(height: 10),
 
-          if (isUnreachable && host != null)
+          if (showOfflineWall && host != null)
             Expanded(
               child: OfflineHostView(
                 hostName: host.name,
@@ -216,6 +217,57 @@ class _LiveScreenState extends State<LiveScreen> {
             ),
             const SizedBox(height: 10),
 
+            if (softReconnecting) ...[
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: c.inputTint,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: c.input.withValues(alpha: 0.28)),
+                ),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 11,
+                      height: 11,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 1.6,
+                        color: c.input,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        ctrl.retryCountdownSec > 0
+                            ? 'Reconnecting in ${ctrl.retryCountdownSec}s…'
+                            : 'Reconnecting to ${host?.name ?? 'host'}…',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: SlateTypography.data(c, color: c.text2),
+                      ),
+                    ),
+                    GestureDetector(
+                      onTap: ctrl.retryConnection,
+                      behavior: HitTestBehavior.opaque,
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: Text(
+                          'Retry',
+                          style: SlateTypography.data(
+                            c,
+                            color: c.input,
+                            weight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+
             // Live terminal sheet (fills available space cleanly)
             Expanded(
               child: TerminalSheet(
@@ -230,7 +282,8 @@ class _LiveScreenState extends State<LiveScreen> {
             ..._buildActionBlock(context, ctrl, snap, pane),
 
             // Compact Switch account chips when running with profile support
-            if (pane.supportsProfiles &&
+            if (!keyboardOpen &&
+                pane.supportsProfiles &&
                 pane.rateLimit == null &&
                 pane.status == 'running') ...[
               Builder(builder: (context) {

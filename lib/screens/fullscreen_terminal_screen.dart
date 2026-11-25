@@ -125,7 +125,7 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                       ),
                       SlateIconButton(
                         icon: null,
-                        label: 'A−',
+                        label: 'A-',
                         tooltip: 'Smaller text',
                         small: true,
                         onPressed: () => ctrl.updateSettings(
@@ -170,6 +170,7 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                       children: [
                         Positioned.fill(
                           child: TerminalOutputView(
+                            paneId: pane?.id,
                             controller: _scrollCtrl,
                             output: pane?.output ?? '',
                             fontSize: settings.termFontSize,
@@ -201,12 +202,18 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                                       ),
                                     ],
                                   ),
-                                  child: Center(
-                                    child: Text(
-                                      '↓ Latest output',
-                                      style: SlateTypography.data(c,
-                                          color: c.text),
-                                    ),
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(PhosphorIconsRegular.arrowDown,
+                                          size: 12, color: c.text),
+                                      const SizedBox(width: 4),
+                                      Text(
+                                        'Latest output',
+                                        style: SlateTypography.data(c,
+                                            color: c.text),
+                                      ),
+                                    ],
                                   ),
                                 ),
                               ),

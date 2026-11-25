@@ -36,7 +36,8 @@ class AccountsScreen extends StatelessWidget {
             title: 'Accounts',
             hostName: host?.name ?? 'No host',
             hostOnline: controller.phase == ConnectionPhase.connected,
-            hostReconnecting: controller.phase == ConnectionPhase.reconnecting,
+            hostReconnecting: controller.phase == ConnectionPhase.connecting ||
+                controller.phase == ConnectionPhase.reconnecting,
             hasUpdateBadge: controller.availableUpdate?.hasUpdate ?? false,
             onTapHost: onOpenHosts,
             onTapSettings: onOpenSettings,

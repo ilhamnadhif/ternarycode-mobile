@@ -25,6 +25,7 @@ class AppController extends ChangeNotifier {
     ApkUpdater? updater,
     this.autoCheckUpdates = false,
     this.loadPlatformInfo = false,
+    this.enterDelay = const Duration(milliseconds: 220),
   })  : _api = api,
         _storage = storage,
         _notifications = notifications,
@@ -37,10 +38,15 @@ class AppController extends ChangeNotifier {
   final bool autoCheckUpdates;
   final bool loadPlatformInfo;
 
+  /// Pause between writing prompt text and sending standalone `\r` so TUI
+  /// paste-burst detectors (Codex CLI, Claude Code, OpenCode, Antigravity)
+  /// submit the prompt instead of inserting a newline.
+  final Duration enterDelay;
+
   ApkReleaseInfo? _availableUpdate;
   ApkReleaseInfo? get availableUpdate => _availableUpdate;
 
-  String _appVersion = '0.1.0';
+  String _appVersion = '0.2.1';
   String get appVersion => _appVersion;
 
   bool _bootstrapped = false;
@@ -108,7 +114,31 @@ class AppController extends ChangeNotifier {
   Timer? _reconnectTimer;
   Timer? _countdownTimer;
   int _backoffAttempt = 0;
+  int _consecutiveFailures = 0;
+  bool _hasSnapshotForHost = false;
+  bool _appInBackground = false;
+  DateTime? _pausedAt;
+  DateTime? _lastStreamActivityAt;
+  bool _connecting = false;
   bool _disposed = false;
+  Future<void> _sendQueue = Future<void>.value();
+
+  /// Only hijack `LiveScreen` with the full-screen `OfflineHostView` if the
+  /// device was revoked or the host stayed unreachable for multiple retries
+  /// (or has never loaded a snapshot yet). Brief Wi-Fi/background drops keep
+  /// the terminal visible with a compact reconnecting banner instead.
+  bool get showOfflineWall {
+    if (_phase == ConnectionPhase.revoked) return true;
+    if (_phase != ConnectionPhase.reconnecting) return false;
+    return !_hasSnapshotForHost || _consecutiveFailures >= 3;
+  }
+
+  /// True while recovering a live connection in the background without hiding
+  /// the terminal canvas.
+  bool get isSoftReconnecting =>
+      !showOfflineWall &&
+      (_phase == ConnectionPhase.reconnecting ||
+          (_phase == ConnectionPhase.connecting && _hasSnapshotForHost));
 
   // Deduplication map: paneId -> last notified status signature
   final Map<int, String> _notifiedSignatures = {};
@@ -207,6 +237,60 @@ class AppController extends ChangeNotifier {
     }
   }
 
+  /// Reacts to Android/iOS foreground/background transitions so returning from
+  /// WhatsApp or a locked screen immediately heals the SSE stream without
+  /// leaving the user staring at a stale "Retry now" countdown.
+  void onAppLifecycleChanged(AppLifecycleState state) {
+    if (_disposed || !isPaired || isDemoMode) return;
+    if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.hidden) {
+      _appInBackground = true;
+      _pausedAt = DateTime.now();
+      // Pause retry timers while backgrounded so OS background network blocks
+      // do not inflate backoff to 10-25s before the user returns.
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+      _countdownTimer?.cancel();
+      _countdownTimer = null;
+      return;
+    }
+
+    if (state == AppLifecycleState.resumed) {
+      final wasPaused = _pausedAt;
+      _appInBackground = false;
+      _pausedAt = null;
+      if (_phase == ConnectionPhase.revoked) return;
+
+      final pausedLong = wasPaused != null &&
+          DateTime.now().difference(wasPaused) >= const Duration(seconds: 4);
+      final staleStream = _lastStreamActivityAt == null ||
+          DateTime.now().difference(_lastStreamActivityAt!) >=
+              const Duration(seconds: 12);
+
+      if (_phase != ConnectionPhase.connected ||
+          _sseSub == null ||
+          pausedLong ||
+          staleStream) {
+        _backoffAttempt = 0;
+        _consecutiveFailures = 0;
+        unawaited(_connectActiveHost(silent: _hasSnapshotForHost));
+      }
+    }
+  }
+
+  void openAlertProject(String projectName) {
+    final lower = projectName.trim().toLowerCase();
+    for (final p in _snapshot.panes) {
+      if (p.projectName.toLowerCase() == lower) {
+        focusPane(p.id);
+        return;
+      }
+    }
+    _projectQuery = projectName;
+    _tabIndex = 2;
+    notifyListeners();
+  }
+
   /// Launches the interactive Slate demo workspace so users can preview every screen immediately.
   Future<void> enterDemoMode() async {
     _cancelStream();
@@ -214,6 +298,8 @@ class AppController extends ChangeNotifier {
     _activeHostId = _hosts.first.id;
     _snapshot = DemoFixtures.snapshot();
     _selectedPaneId = _snapshot.panes.first.id;
+    _hasSnapshotForHost = true;
+    _consecutiveFailures = 0;
     _phase = ConnectionPhase.connected;
     _connectionError = null;
     _tabIndex = 0;
@@ -283,6 +369,8 @@ class AppController extends ChangeNotifier {
       _hosts.insert(0, newHost);
       _activeHostId = hostId;
       _snapshot = initialSnap;
+      _hasSnapshotForHost = true;
+      _consecutiveFailures = 0;
       _selectedPaneId =
           initialSnap.panes.isNotEmpty ? initialSnap.panes.first.id : null;
 
@@ -310,6 +398,9 @@ class AppController extends ChangeNotifier {
     if (idx == -1) return;
 
     _activeHostId = hostId;
+    _hasSnapshotForHost = false;
+    _consecutiveFailures = 0;
+    _backoffAttempt = 0;
     final target = _hosts[idx];
     if (!target.isDemo) {
       await _storage.saveActiveHostId(hostId);
@@ -323,6 +414,7 @@ class AppController extends ChangeNotifier {
         _retryCountdownSec = 4;
       } else {
         _phase = ConnectionPhase.connected;
+        _hasSnapshotForHost = true;
         _connectionError = null;
         _snapshot = DemoFixtures.snapshot();
         _selectedPaneId = _snapshot.panes.first.id;
@@ -346,6 +438,8 @@ class AppController extends ChangeNotifier {
               : h)
           .toList();
       _phase = ConnectionPhase.connected;
+      _hasSnapshotForHost = true;
+      _consecutiveFailures = 0;
       _connectionError = null;
       _snapshot = DemoFixtures.snapshot();
       _selectedPaneId = _snapshot.panes.first.id;
@@ -354,7 +448,8 @@ class AppController extends ChangeNotifier {
       return;
     }
     _backoffAttempt = 0;
-    await _connectActiveHost();
+    _consecutiveFailures = 0;
+    await _connectActiveHost(silent: _hasSnapshotForHost);
   }
 
   Future<void> unpairActiveHost() async {
@@ -367,6 +462,8 @@ class AppController extends ChangeNotifier {
     _hosts = _hosts.where((h) => h.id != host.id).toList();
     _activeHostId = _hosts.isEmpty ? null : _hosts.first.id;
     _snapshot = const CompanionSnapshot();
+    _hasSnapshotForHost = false;
+    _consecutiveFailures = 0;
     _selectedPaneId = null;
     _phase = ConnectionPhase.disconnected;
     _connectionError = null;
@@ -395,72 +492,103 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<void> _connectActiveHost() async {
-    _cancelStream();
-    final host = activeHost;
-    if (host == null) return;
-    if (host.isDemo) {
-      _phase = ConnectionPhase.connected;
-      notifyListeners();
-      return;
-    }
-
-    final token = await _storage.readToken(host.id);
-    if (token == null || token.isEmpty) {
-      _phase = ConnectionPhase.revoked;
-      _connectionError = 'Missing Keystore token. Please pair again.';
-      notifyListeners();
-      return;
-    }
-
-    _phase = ConnectionPhase.connecting;
-    _connectionError = null;
-    notifyListeners();
-
-    // Fetch immediate snapshot for instant latency & state before SSE stream ticks.
+  Future<void> _connectActiveHost({bool silent = false}) async {
+    if (_connecting) return;
+    _connecting = true;
     try {
-      final initial = await _api.fetchState(baseUrl: host.baseUrl, token: token);
-      if (_disposed || activeHost?.id != host.id) return;
-      _applySnapshot(host.id, initial.snapshot, latencyMs: initial.latencyMs);
-      _phase = ConnectionPhase.connected;
-      _backoffAttempt = 0;
-      notifyListeners();
-    } on CompanionApiException catch (e) {
-      if (_disposed || activeHost?.id != host.id) return;
-      if (e.isUnauthorized) {
-        _markRevoked(host.id, e.message);
+      _cancelStream();
+      final host = activeHost;
+      if (host == null) return;
+      if (host.isDemo) {
+        _phase = ConnectionPhase.connected;
+        _hasSnapshotForHost = true;
+        notifyListeners();
         return;
       }
-      _scheduleReconnect(host.id, e.message);
-      return;
-    }
 
-    _sseSub = _api
-        .subscribeEvents(baseUrl: host.baseUrl, token: token)
-        .listen(
-      (snap) {
-        if (_disposed || activeHost?.id != host.id) return;
-        _backoffAttempt = 0;
-        _phase = ConnectionPhase.connected;
-        _connectionError = null;
-        _applySnapshot(host.id, snap);
+      final token = await _storage.readToken(host.id);
+      if (token == null || token.isEmpty) {
+        _phase = ConnectionPhase.revoked;
+        _connectionError = 'Missing Keystore token. Please pair again.';
         notifyListeners();
-      },
-      onError: (Object err) {
+        return;
+      }
+
+      if (!silent) {
+        _phase = ConnectionPhase.connecting;
+        _connectionError = null;
+        notifyListeners();
+      }
+
+      // Fetch immediate snapshot for instant latency & state before SSE stream ticks.
+      try {
+        final initial =
+            await _api.fetchState(baseUrl: host.baseUrl, token: token);
         if (_disposed || activeHost?.id != host.id) return;
-        if (err is CompanionApiException && err.isUnauthorized) {
-          _markRevoked(host.id, err.message);
+        _applySnapshot(host.id, initial.snapshot, latencyMs: initial.latencyMs);
+        _phase = ConnectionPhase.connected;
+        _hasSnapshotForHost = true;
+        _backoffAttempt = 0;
+        _consecutiveFailures = 0;
+        _lastStreamActivityAt = DateTime.now();
+        _connectionError = null;
+        notifyListeners();
+      } on CompanionApiException catch (e) {
+        if (_disposed || activeHost?.id != host.id) return;
+        if (e.isUnauthorized) {
+          _markRevoked(host.id, e.message);
           return;
         }
-        _scheduleReconnect(host.id, err.toString());
-      },
-      onDone: () {
-        if (_disposed || activeHost?.id != host.id) return;
-        if (_phase != ConnectionPhase.revoked) {
-          _scheduleReconnect(host.id, 'Event stream closed');
-        }
-      },
-    );
+        _scheduleReconnect(host.id, e.message);
+        return;
+      }
+
+      _sseSub = _api
+          .subscribeEvents(
+        baseUrl: host.baseUrl,
+        token: token,
+        onKeepAlive: () {
+          if (_disposed || activeHost?.id != host.id) return;
+          _lastStreamActivityAt = DateTime.now();
+          _backoffAttempt = 0;
+          _consecutiveFailures = 0;
+          if (_phase != ConnectionPhase.connected) {
+            _phase = ConnectionPhase.connected;
+            _connectionError = null;
+            notifyListeners();
+          }
+        },
+      )
+          .listen(
+        (snap) {
+          if (_disposed || activeHost?.id != host.id) return;
+          _lastStreamActivityAt = DateTime.now();
+          _backoffAttempt = 0;
+          _consecutiveFailures = 0;
+          _hasSnapshotForHost = true;
+          _phase = ConnectionPhase.connected;
+          _connectionError = null;
+          _applySnapshot(host.id, snap);
+          notifyListeners();
+        },
+        onError: (Object err) {
+          if (_disposed || activeHost?.id != host.id) return;
+          if (err is CompanionApiException && err.isUnauthorized) {
+            _markRevoked(host.id, err.message);
+            return;
+          }
+          _scheduleReconnect(host.id, err.toString());
+        },
+        onDone: () {
+          if (_disposed || activeHost?.id != host.id) return;
+          if (_phase != ConnectionPhase.revoked) {
+            _scheduleReconnect(host.id, 'Event stream closed');
+          }
+        },
+      );
+    } finally {
+      _connecting = false;
+    }
   }
 
   void _applySnapshot(String hostId, CompanionSnapshot snap, {int? latencyMs}) {
@@ -552,36 +680,60 @@ class AppController extends ChangeNotifier {
 
   void _scheduleReconnect(String hostId, String reason) {
     _cancelStream();
+    _connectionError = reason;
+
+    // While app is backgrounded on Android, pause retries instead of climbing
+    // backoff to 10s+; `onAppLifecycleChanged(resumed)` will heal instantly.
+    if (_appInBackground) {
+      _phase = ConnectionPhase.reconnecting;
+      notifyListeners();
+      return;
+    }
+
+    _consecutiveFailures++;
     _hosts = _hosts
         .map((h) => h.id == hostId ? h.copyWith(online: false) : h)
         .toList();
     _phase = ConnectionPhase.reconnecting;
-    _connectionError = reason;
 
-    const delays = [2, 4, 8, 15, 25];
-    final sec = delays[_backoffAttempt.clamp(0, delays.length - 1)];
+    // First retry fires almost immediately (350ms) so momentary Wi-Fi roams or
+    // desktop ticks recover invisibly without ever flashing "Retry now".
+    const delaysMs = [350, 1000, 2000, 4000, 8000, 10000];
+    final delayMs = delaysMs[_backoffAttempt.clamp(0, delaysMs.length - 1)];
     _backoffAttempt++;
-    _retryCountdownSec = sec;
+    final sec = (delayMs / 1000).ceil();
+    _retryCountdownSec = delayMs >= 1000 ? sec : 0;
     notifyListeners();
 
-    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
-      if (_disposed) {
-        t.cancel();
-        return;
-      }
-      if (_retryCountdownSec > 1) {
-        _retryCountdownSec--;
-        notifyListeners();
-      } else {
-        t.cancel();
-      }
-    });
+    if (delayMs >= 1000) {
+      _countdownTimer = Timer.periodic(const Duration(seconds: 1), (t) {
+        if (_disposed) {
+          t.cancel();
+          return;
+        }
+        if (_retryCountdownSec > 1) {
+          _retryCountdownSec--;
+          notifyListeners();
+        } else {
+          t.cancel();
+        }
+      });
+    }
 
-    _reconnectTimer = Timer(Duration(seconds: sec), () {
-      if (!_disposed && activeHost?.id == hostId) {
-        _connectActiveHost();
+    _reconnectTimer = Timer(Duration(milliseconds: delayMs), () {
+      if (!_disposed && !_appInBackground && activeHost?.id == hostId) {
+        _connectActiveHost(silent: _hasSnapshotForHost);
       }
     });
+  }
+
+  void _handleActionError(String hostId, CompanionApiException e) {
+    if (e.isUnauthorized) {
+      _markRevoked(hostId, e.message);
+    } else if (e.isNetwork && _phase == ConnectionPhase.connected) {
+      _scheduleReconnect(hostId, e.message);
+    }
+    showToast(e.message);
   }
 
   void _cancelStream() {
@@ -635,7 +787,7 @@ class AppController extends ChangeNotifier {
               : 'Interrupted (^C)';
       showToast(verb);
     } on CompanionApiException catch (e) {
-      showToast(e.message);
+      _handleActionError(host.id, e);
     }
   }
 
@@ -644,29 +796,75 @@ class AppController extends ChangeNotifier {
     String text, {
     bool enter = true,
     String? toastLabel,
-  }) async {
+  }) {
     _triggerHaptic();
     if (isDemoMode) {
       _handleDemoInput(paneId, text, enter: enter, toastLabel: toastLabel);
-      return;
+      return Future<void>.value();
     }
 
+    // Serialize writes in FIFO order so rapid sends never interleave text & Enter.
+    final next = _sendQueue.then((_) => _performSendTerminalInput(
+          paneId,
+          text,
+          enter: enter,
+          toastLabel: toastLabel,
+        ));
+    _sendQueue = next.catchError((_) {});
+    return next;
+  }
+
+  Future<void> _performSendTerminalInput(
+    int paneId,
+    String text, {
+    required bool enter,
+    String? toastLabel,
+  }) async {
     final host = activeHost;
     if (host == null) return;
     final token = await _storage.readToken(host.id);
     if (token == null) return;
 
     try {
-      await _api.sendInput(
-        baseUrl: host.baseUrl,
-        token: token,
-        paneId: paneId,
-        text: text,
-        enter: enter,
-      );
+      final normalized = text.replaceAll('\r\n', '\n');
+      final clean = enter && normalized.isNotEmpty
+          ? normalized.replaceFirst(RegExp(r'[\r\n]+$'), '')
+          : normalized;
+
+      if (enter && clean.isNotEmpty) {
+        // Send text and Enter as two separate writes with a brief pause so TUI
+        // paste-burst detectors (Codex CLI, Claude Code, OpenCode, Antigravity)
+        // submit the prompt instead of turning Enter into a literal newline.
+        await _api.sendInput(
+          baseUrl: host.baseUrl,
+          token: token,
+          paneId: paneId,
+          text: clean,
+          enter: false,
+        );
+        if (enterDelay > Duration.zero) {
+          await Future<void>.delayed(enterDelay);
+        }
+        if (_disposed || activeHost?.id != host.id) return;
+        await _api.sendInput(
+          baseUrl: host.baseUrl,
+          token: token,
+          paneId: paneId,
+          text: '',
+          enter: true,
+        );
+      } else {
+        await _api.sendInput(
+          baseUrl: host.baseUrl,
+          token: token,
+          paneId: paneId,
+          text: clean,
+          enter: enter,
+        );
+      }
       showToast(toastLabel ?? 'Sent to pane');
     } on CompanionApiException catch (e) {
-      showToast(e.message);
+      _handleActionError(host.id, e);
     }
   }
 
@@ -691,7 +889,7 @@ class AppController extends ChangeNotifier {
       );
       showToast('Switched to $profileId');
     } on CompanionApiException catch (e) {
-      showToast(e.message);
+      _handleActionError(host.id, e);
     }
   }
 
@@ -712,6 +910,12 @@ class AppController extends ChangeNotifier {
     final token = await _storage.readToken(host.id);
     if (token == null) return;
 
+    _pendingSpawnProjectId = project.id;
+    _paneIdsBeforeSpawn = _snapshot.panes
+        .where((p) => p.projectId == project.id)
+        .map((p) => p.id)
+        .toSet();
+
     try {
       await _api.resumeSession(
         baseUrl: host.baseUrl,
@@ -725,7 +929,9 @@ class AppController extends ChangeNotifier {
       showToast('Resuming “${session.title}”');
       notifyListeners();
     } on CompanionApiException catch (e) {
-      showToast(e.message);
+      _pendingSpawnProjectId = null;
+      _paneIdsBeforeSpawn = const {};
+      _handleActionError(host.id, e);
     }
   }
 
@@ -792,7 +998,7 @@ class AppController extends ChangeNotifier {
     } on CompanionApiException catch (e) {
       _pendingSpawnProjectId = null;
       _paneIdsBeforeSpawn = const {};
-      showToast(e.message);
+      _handleActionError(host.id, e);
     }
   }
 
@@ -823,11 +1029,13 @@ class AppController extends ChangeNotifier {
   }
 
   void toggleDemoFailoverMode() {
+    if (!isDemoMode) {
+      showToast('Configure failover mode in Desktop Settings → Accounts');
+      return;
+    }
     final next = _snapshot.failoverMode == 'auto' ? 'manual' : 'auto';
     _snapshot = _snapshot.copyWith(failoverMode: next);
-    showToast(
-      'Failover: ${next == 'auto' ? 'Automatic' : 'Ask me'}${isDemoMode ? '' : ' (set on desktop)'}',
-    );
+    showToast('Failover: ${next == 'auto' ? 'Automatic' : 'Ask me'}');
     notifyListeners();
   }
 

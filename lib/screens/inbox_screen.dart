@@ -44,7 +44,8 @@ class InboxScreen extends StatelessWidget {
             title: 'Inbox',
             hostName: host?.name ?? 'No host',
             hostOnline: controller.phase == ConnectionPhase.connected,
-            hostReconnecting: controller.phase == ConnectionPhase.reconnecting,
+            hostReconnecting: controller.phase == ConnectionPhase.connecting ||
+                controller.phase == ConnectionPhase.reconnecting,
             hasUpdateBadge: controller.availableUpdate?.hasUpdate ?? false,
             onTapHost: onOpenHosts,
             onTapSettings: onOpenSettings,
@@ -122,8 +123,7 @@ class InboxScreen extends StatelessWidget {
                             age: alert.time.length >= 5
                                 ? alert.time.substring(0, 5)
                                 : alert.time,
-                            onTap: () =>
-                                controller.showToast('Opened $proj'),
+                            onTap: () => controller.openAlertProject(proj),
                           ),
                         );
                       }),

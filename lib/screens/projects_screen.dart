@@ -88,7 +88,8 @@ class _ProjectsScreenState extends State<ProjectsScreen> {
             title: 'Projects',
             hostName: host?.name ?? 'No host',
             hostOnline: ctrl.phase == ConnectionPhase.connected,
-            hostReconnecting: ctrl.phase == ConnectionPhase.reconnecting,
+            hostReconnecting: ctrl.phase == ConnectionPhase.connecting ||
+                ctrl.phase == ConnectionPhase.reconnecting,
             hasUpdateBadge: ctrl.availableUpdate?.hasUpdate ?? false,
             onTapHost: widget.onOpenHosts,
             onTapSettings: widget.onOpenSettings,
