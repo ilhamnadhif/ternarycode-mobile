@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ternarycode_mobile/models/host_models.dart';
 import 'package:ternarycode_mobile/services/companion_api.dart';
 import 'package:ternarycode_mobile/services/notification_service.dart';
 import 'package:ternarycode_mobile/services/interactive_prompt_parser.dart';
@@ -558,6 +559,139 @@ Enter to confirm · Esc to cancel
       deviceName: 'Captive Test',
     );
     expect(htmlErr, contains('Malformed pairing response'));
+
+    ctrl.dispose();
+  });
+
+  test('Hybrid Cloudflare Relay + LAN parsing, WS stream, fallback & 4401 revoke', () async {
+    // 1. Verify QR parser extracts both Cloudflare Relay URL and LAN hint.
+    final parsed = ParsedPairingQr.tryParse(
+      'https://ternarycode-relay.m-ilhamnadhif121.workers.dev/r/tcabcdef123456/?pair=K7M9-P2X4-Q8R2&lan=192.168.1.50:7890',
+    );
+    expect(parsed, isNotNull);
+    expect(
+      parsed!.baseUrl,
+      'https://ternarycode-relay.m-ilhamnadhif121.workers.dev/r/tcabcdef123456',
+    );
+    expect(parsed.lanUrl, 'http://192.168.1.50:7890');
+    expect(parsed.code, 'K7M9-P2X4-Q8R2');
+    expect(PairedHost.isCloudflareRelayUrl(parsed.baseUrl), isTrue);
+    expect(PairedHost.inferTransport(parsed.baseUrl), 'Cloudflare Relay');
+
+    // 2. Stand up a real local mock Cloudflare Relay room (`/r/tctest123456/*`)
+    // supporting HTTP + WebSocket (`/api/ws`) with Hibernation text pings & 4401 revoke.
+    final relayServer = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    addTearDown(() => relayServer.close(force: true));
+    WebSocket? activeClientWs;
+    final relayBase =
+        'http://127.0.0.1:${relayServer.port}/r/tctest123456';
+
+    relayServer.listen((HttpRequest req) async {
+      final path = req.uri.path;
+      if (path == '/r/tctest123456/api/pair') {
+        req.response
+          ..statusCode = 200
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({
+            'device_id': 'dev-relay-1',
+            'device_token': 'tok-relay-secret-99',
+          }));
+        await req.response.close();
+        return;
+      }
+      if (path == '/r/tctest123456/api/state') {
+        req.response
+          ..statusCode = 200
+          ..headers.contentType = ContentType.json
+          ..write(jsonEncode({
+            'host_os': 'Mac',
+            'failover_mode': 'auto',
+            'projects': [],
+            'panes': [
+              {
+                'id': 7,
+                'project_id': 1,
+                'project_name': 'ternarycode',
+                'label': 'Claude Code',
+                'provider': 'claude',
+                'status': 'idle',
+                'status_label': 'Idle',
+                'output': 'Relay connected!',
+              }
+            ],
+            'profiles': [],
+            'alerts': [],
+          }));
+        await req.response.close();
+        return;
+      }
+      if (path == '/r/tctest123456/api/ws' &&
+          WebSocketTransformer.isUpgradeRequest(req)) {
+        final ws = await WebSocketTransformer.upgrade(req);
+        activeClientWs = ws;
+        ws.add(jsonEncode({
+          't': 'state',
+          'd': jsonEncode({
+            'host_os': 'Mac',
+            'failover_mode': 'auto',
+            'projects': [],
+            'panes': [
+              {
+                'id': 7,
+                'project_id': 1,
+                'project_name': 'ternarycode',
+                'label': 'Claude Code',
+                'provider': 'claude',
+                'status': 'running',
+                'status_label': 'Running',
+                'output': 'Streamed over WS Hibernation!',
+              }
+            ],
+            'profiles': [],
+            'alerts': [],
+          }),
+        }));
+        ws.listen((msg) {
+          if (msg == 'ping') ws.add('pong');
+        });
+        return;
+      }
+      req.response.statusCode = 404;
+      await req.response.close();
+    });
+
+    // Bind and immediately close a dummy port to simulate an unreachable home LAN IP.
+    final deadLan = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final deadLanPort = deadLan.port;
+    await deadLan.close(force: true);
+
+    final ctrl = AppController(
+      api: CompanionApi(),
+      storage: InMemoryStorageService(),
+      notifications: NoopNotificationService(),
+      enterDelay: const Duration(milliseconds: 5),
+      menuKeyDelay: const Duration(milliseconds: 5),
+    );
+    await ctrl.init();
+
+    // Pair with unreachable LAN hint -> must fall back seamlessly to Cloudflare Relay + WS.
+    final err = await ctrl.pairHost(
+      rawUrl: relayBase,
+      code: 'K7M9-P2X4-Q8R2',
+      deviceName: 'Pixel Remote',
+      lanUrl: 'http://127.0.0.1:$deadLanPort',
+    );
+    expect(err, isNull);
+    await Future<void>.delayed(const Duration(milliseconds: 180));
+    expect(ctrl.phase, ConnectionPhase.connected);
+    expect(ctrl.activeHost?.via, 'Cloudflare Relay');
+    expect(ctrl.activeHost?.lanUrl, 'http://127.0.0.1:$deadLanPort');
+    expect(ctrl.snapshot.panes.first.output, contains('Streamed over WS Hibernation!'));
+
+    // Revoking device via WS close code 4401 immediately flips Mobile to revoked phase.
+    await activeClientWs?.close(4401, 'revoked');
+    await Future<void>.delayed(const Duration(milliseconds: 150));
+    expect(ctrl.phase, ConnectionPhase.revoked);
 
     ctrl.dispose();
   });

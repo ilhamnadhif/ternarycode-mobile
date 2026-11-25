@@ -79,6 +79,7 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
       rawUrl: det.baseUrl,
       code: det.code,
       deviceName: 'Android Phone',
+      lanUrl: det.lanUrl,
     );
     if (!mounted) return;
     if (err == null) {

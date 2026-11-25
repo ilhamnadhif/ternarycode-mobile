@@ -125,6 +125,7 @@ class CompanionApi {
   Future<StateFetchResult> fetchState({
     required String baseUrl,
     required String token,
+    Duration? timeout,
   }) async {
     final uri = Uri.parse('${_cleanBase(baseUrl)}/api/state');
     final sw = Stopwatch()..start();
@@ -132,7 +133,7 @@ class CompanionApi {
     try {
       resp = await _client
           .get(uri, headers: _authHeaders(token))
-          .timeout(_timeout);
+          .timeout(timeout ?? _timeout);
     } on TimeoutException {
       throw const CompanionApiException('Host timed out', isNetwork: true);
     } catch (e) {
@@ -168,14 +169,25 @@ class CompanionApi {
     );
   }
 
-  /// Opens a persistent Server-Sent Events stream to `GET /api/events`.
-  /// Includes a staleness watchdog so half-open Wi-Fi sockets self-heal automatically.
+  /// Opens a persistent real-time stream:
+  /// - Uses hibernatable WebSocket (`GET /api/ws`) when connected through a
+  ///   TernaryCode Cloudflare Relay (`/r/<hostId>`) so idle connections consume
+  ///   zero Durable Object compute duration.
+  /// - Uses Server-Sent Events (`GET /api/events`) on local Wi-Fi LAN / custom tunnels.
   Stream<CompanionSnapshot> subscribeEvents({
     required String baseUrl,
     required String token,
     void Function()? onKeepAlive,
     Duration watchdogTimeout = const Duration(seconds: 35),
   }) {
+    if (PairedHost.isCloudflareRelayUrl(baseUrl)) {
+      return subscribeRelayWebSocket(
+        baseUrl: baseUrl,
+        token: token,
+        onKeepAlive: onKeepAlive,
+        watchdogTimeout: watchdogTimeout,
+      );
+    }
     late StreamController<CompanionSnapshot> controller;
     HttpClient? ioClient;
     StreamSubscription<String>? lineSub;
@@ -294,6 +306,171 @@ class CompanionApi {
             controller.addError(
               CompanionApiException('Unable to open event stream: $e',
                   isNetwork: true),
+            );
+            await controller.close();
+          }
+          cleanup();
+        }
+      },
+      onCancel: cleanup,
+    );
+
+    return controller.stream;
+  }
+
+  /// Opens a hibernatable WebSocket stream (`wss://<relay>/r/<hostId>/api/ws`)
+  /// with zero-cost text `"ping"` / `"pong"` keepalives and instant `4401`
+  /// revocation detection.
+  Stream<CompanionSnapshot> subscribeRelayWebSocket({
+    required String baseUrl,
+    required String token,
+    void Function()? onKeepAlive,
+    Duration watchdogTimeout = const Duration(seconds: 65),
+  }) {
+    late StreamController<CompanionSnapshot> controller;
+    WebSocket? socket;
+    StreamSubscription<dynamic>? sub;
+    Timer? pingTimer;
+    Timer? watchdog;
+    var closed = false;
+
+    void cleanup() {
+      closed = true;
+      pingTimer?.cancel();
+      pingTimer = null;
+      watchdog?.cancel();
+      watchdog = null;
+      sub?.cancel();
+      sub = null;
+      try {
+        socket?.close();
+      } catch (_) {}
+      socket = null;
+    }
+
+    void bumpWatchdog() {
+      if (closed || watchdogTimeout <= Duration.zero) return;
+      watchdog?.cancel();
+      watchdog = Timer(watchdogTimeout, () {
+        if (!closed) {
+          controller.addError(
+            const CompanionApiException(
+              'Relay stream stalled (no heartbeat)',
+              isNetwork: true,
+            ),
+          );
+          controller.close();
+          cleanup();
+        }
+      });
+    }
+
+    controller = StreamController<CompanionSnapshot>(
+      onListen: () async {
+        try {
+          final clean = _cleanBase(baseUrl);
+          final wsBase = clean.startsWith('https://')
+              ? 'wss://${clean.substring(8)}'
+              : clean.startsWith('http://')
+                  ? 'ws://${clean.substring(7)}'
+                  : 'wss://$clean';
+          final wsUri = '$wsBase/api/ws';
+          socket = await WebSocket.connect(
+            wsUri,
+            headers: {'Authorization': 'Bearer $token'},
+          ).timeout(_timeout);
+
+          if (closed) {
+            cleanup();
+            return;
+          }
+
+          bumpWatchdog();
+          pingTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+            if (!closed && socket != null) {
+              try {
+                socket!.add('ping');
+              } catch (_) {}
+            }
+          });
+
+          sub = socket!.listen(
+            (raw) {
+              if (closed) return;
+              bumpWatchdog();
+              if (raw is! String) return;
+              if (raw == 'pong') {
+                onKeepAlive?.call();
+                return;
+              }
+              try {
+                final frame = jsonDecode(raw);
+                if (frame is! Map<String, dynamic>) return;
+                final type = frame['t'];
+                if (type == 'state') {
+                  final d = frame['d'];
+                  final map = d is String
+                      ? jsonDecode(d)
+                      : (d is Map<String, dynamic> ? d : null);
+                  if (map is Map<String, dynamic>) {
+                    controller.add(CompanionSnapshot.fromJson(map));
+                  }
+                } else if (type == 'offline') {
+                  controller.addError(
+                    const CompanionApiException(
+                      'Computer went offline on relay',
+                      isNetwork: true,
+                    ),
+                  );
+                  controller.close();
+                  cleanup();
+                } else if (type == 'pong') {
+                  onKeepAlive?.call();
+                }
+              } catch (_) {
+                // Ignore malformed relay frames cleanly.
+              }
+            },
+            onError: (Object err, StackTrace st) {
+              if (!closed) {
+                controller.addError(
+                  CompanionApiException('Relay stream dropped: $err',
+                      isNetwork: true),
+                  st,
+                );
+                controller.close();
+              }
+              cleanup();
+            },
+            onDone: () {
+              if (!closed) {
+                final code = socket?.closeCode;
+                if (code == 4401) {
+                  controller.addError(const CompanionApiException(
+                    'Device was revoked on desktop.',
+                    statusCode: 401,
+                    isUnauthorized: true,
+                  ));
+                }
+                controller.close();
+              }
+              cleanup();
+            },
+            cancelOnError: true,
+          );
+        } catch (e) {
+          if (!closed) {
+            final msg = e.toString();
+            final is401 = msg.contains('401');
+            controller.addError(
+              CompanionApiException(
+                is401
+                    ? 'Device was revoked on desktop.'
+                    : 'Unable to open relay stream: $e',
+                statusCode: is401 ? 401 : null,
+                isUnauthorized: is401,
+                isNetwork: !is401,
+              ),
             );
             await controller.close();
           }

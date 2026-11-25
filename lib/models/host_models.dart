@@ -1,13 +1,14 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 
-/// A paired TernaryCode desktop computer (Wi-Fi LAN, Tailscale, Cloudflare, or ngrok).
+/// A paired TernaryCode desktop computer (Wi-Fi LAN, Cloudflare Relay, Tailscale, or ngrok).
 class PairedHost {
   const PairedHost({
     required this.id,
     required this.name,
     required this.baseUrl,
     required this.deviceId,
+    this.lanUrl,
     this.hostOs = 'Mac',
     this.via = 'Wi-Fi LAN',
     this.online = false,
@@ -21,6 +22,11 @@ class PairedHost {
   final String name;
   final String baseUrl;
   final String deviceId;
+
+  /// Optional local Wi-Fi LAN address paired alongside a Cloudflare Relay URL
+  /// so Mobile prefers direct LAN at home (0 relay quota) and auto-switches to
+  /// Cloudflare Relay when outside Wi-Fi.
+  final String? lanUrl;
   final String hostOs;
   final String via;
   final bool online;
@@ -33,6 +39,7 @@ class PairedHost {
     String? name,
     String? baseUrl,
     String? deviceId,
+    String? lanUrl,
     String? hostOs,
     String? via,
     bool? online,
@@ -45,6 +52,7 @@ class PairedHost {
       name: name ?? this.name,
       baseUrl: baseUrl ?? this.baseUrl,
       deviceId: deviceId ?? this.deviceId,
+      lanUrl: lanUrl ?? this.lanUrl,
       hostOs: hostOs ?? this.hostOs,
       via: via ?? this.via,
       online: online ?? this.online,
@@ -60,6 +68,7 @@ class PairedHost {
         'name': name,
         'baseUrl': baseUrl,
         'deviceId': deviceId,
+        if (lanUrl != null && lanUrl!.isNotEmpty) 'lanUrl': lanUrl,
         'hostOs': hostOs,
         'via': via,
         'lastSeenUnix': lastSeenUnix,
@@ -71,6 +80,9 @@ class PairedHost {
         name: (json['name'] as String?) ?? 'Computer',
         baseUrl: (json['baseUrl'] as String?) ?? '',
         deviceId: (json['deviceId'] as String?) ?? '',
+        lanUrl: (json['lanUrl'] as String?)?.trim().isEmpty == true
+            ? null
+            : json['lanUrl'] as String?,
         hostOs: (json['hostOs'] as String?) ?? 'Mac',
         via: (json['via'] as String?) ??
             inferTransport((json['baseUrl'] as String?) ?? ''),
@@ -78,8 +90,19 @@ class PairedHost {
         isDemo: (json['isDemo'] as bool?) ?? false,
       );
 
+  /// True when `url` points to a TernaryCode Cloudflare Relay room (`/r/<hostId>`).
+  static bool isCloudflareRelayUrl(String url) {
+    final uri = Uri.tryParse(url.trim());
+    if (uri == null) return false;
+    final path = uri.path;
+    return path.startsWith('/r/') && path.length > 5;
+  }
+
   static String inferTransport(String url) {
     final lower = url.toLowerCase();
+    if (isCloudflareRelayUrl(url) || lower.contains('.workers.dev')) {
+      return 'Cloudflare Relay';
+    }
     if (lower.contains('.ts.net') || lower.contains('://100.')) {
       return 'Tailscale';
     }
@@ -121,22 +144,28 @@ class ParsedPairingQr {
   const ParsedPairingQr({
     required this.baseUrl,
     required this.code,
+    this.lanUrl,
     this.hostLabel,
   });
 
   final String baseUrl;
   final String code;
+  final String? lanUrl;
   final String? hostLabel;
 
   /// Accepts:
   /// - `http://192.168.1.5:7890/?pair=K7M9-P2X4-Q8R2`
-  /// - `https://tc.ilham.dev/?pair=K7M9-P2X4-Q8R2`
+  /// - `https://relay.workers.dev/r/tc.../?pair=K7M9-P2X4-Q8R2&lan=192.168.1.5:7890`
   /// - `ternarycode://pair?url=http://192.168.1.5:7890&token=K7M9-P2X4-Q8R2`
   static ParsedPairingQr? tryParse(String raw) {
     final trimmed = raw.trim();
     if (trimmed.isEmpty) return null;
     final uri = Uri.tryParse(trimmed);
     if (uri == null || !uri.hasScheme) return null;
+
+    final rawLan = uri.queryParameters['lan'];
+    final lanUrl =
+        rawLan != null && rawLan.trim().isNotEmpty ? normalizeBaseUrl(rawLan) : null;
 
     if (uri.scheme == 'ternarycode') {
       final target = uri.queryParameters['url'] ?? '';
@@ -149,6 +178,7 @@ class ParsedPairingQr {
       return ParsedPairingQr(
         baseUrl: normalized,
         code: code.trim().toUpperCase(),
+        lanUrl: lanUrl,
         hostLabel: parsedTarget?.authority,
       );
     }
@@ -169,6 +199,7 @@ class ParsedPairingQr {
     return ParsedPairingQr(
       baseUrl: base,
       code: code.trim().toUpperCase(),
+      lanUrl: lanUrl,
       hostLabel: uri.authority,
     );
   }

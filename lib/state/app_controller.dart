@@ -52,7 +52,7 @@ class AppController extends ChangeNotifier {
   ApkReleaseInfo? _availableUpdate;
   ApkReleaseInfo? get availableUpdate => _availableUpdate;
 
-  String _appVersion = '0.3.7';
+  String _appVersion = '0.3.8';
   String get appVersion => _appVersion;
 
   bool _bootstrapped = false;
@@ -129,6 +129,20 @@ class AppController extends ChangeNotifier {
   bool _connecting = false;
   bool _disposed = false;
   Future<void> _sendQueue = Future<void>.value();
+
+  /// Active resolved transport URL for the current host (`lanUrl` when on home
+  /// Wi-Fi for 0 Cloudflare quota, or `baseUrl` when on Cloudflare Relay).
+  String? _activeEndpointHostId;
+  String? _activeEndpointUrl;
+
+  String _effectiveBaseUrl(PairedHost host) {
+    if (_activeEndpointHostId == host.id &&
+        _activeEndpointUrl != null &&
+        _activeEndpointUrl!.isNotEmpty) {
+      return _activeEndpointUrl!;
+    }
+    return host.baseUrl;
+  }
 
   /// Only hijack `LiveScreen` with the full-screen `OfflineHostView` if the
   /// device was revoked or the host stayed unreachable for multiple retries
@@ -331,21 +345,55 @@ class AppController extends ChangeNotifier {
     required String rawUrl,
     required String code,
     required String deviceName,
+    String? lanUrl,
   }) async {
-    final normalized = ParsedPairingQr.normalizeBaseUrl(rawUrl);
+    // Allow pasting a full pairing URL (`https://.../r/tc.../?pair=CODE&lan=...`)
+    // directly into Manual Pairing too.
+    final parsedFull = ParsedPairingQr.tryParse(rawUrl);
+    final normalized =
+        parsedFull?.baseUrl ?? ParsedPairingQr.normalizeBaseUrl(rawUrl);
+    final effectiveCode =
+        code.trim().isNotEmpty ? code.trim() : (parsedFull?.code ?? '');
+    final normalizedLan = lanUrl != null && lanUrl.trim().isNotEmpty
+        ? ParsedPairingQr.normalizeBaseUrl(lanUrl)
+        : parsedFull?.lanUrl;
+
     if (normalized == null) {
       return 'Enter a valid host address (e.g. http://192.168.1.5:7890).';
     }
-    if (code.trim().length < 4) {
+    if (effectiveCode.length < 4) {
       return 'Enter the pairing code shown in Settings → Phone.';
     }
 
     try {
-      final result = await _api.pair(
-        baseUrl: normalized,
-        code: code,
-        deviceName: deviceName,
-      );
+      // If a LAN hint was bundled with a Cloudflare Relay URL, try LAN first so
+      // initial pairing on home Wi-Fi uses zero relay requests, falling back to
+      // the primary relay URL transparently.
+      String pairEndpoint = normalized;
+      PairResult result;
+      if (normalizedLan != null && normalizedLan != normalized) {
+        try {
+          result = await _api.pair(
+            baseUrl: normalizedLan,
+            code: effectiveCode,
+            deviceName: deviceName,
+          );
+          pairEndpoint = normalizedLan;
+        } on CompanionApiException catch (e) {
+          if (!e.isNetwork) rethrow;
+          result = await _api.pair(
+            baseUrl: normalized,
+            code: effectiveCode,
+            deviceName: deviceName,
+          );
+        }
+      } else {
+        result = await _api.pair(
+          baseUrl: normalized,
+          code: effectiveCode,
+          deviceName: deviceName,
+        );
+      }
 
       // Fetch initial state right away to populate host OS & panes.
       String hostOs = 'Mac';
@@ -353,7 +401,7 @@ class AppController extends ChangeNotifier {
       int? latencyMs;
       try {
         final fetched = await _api.fetchState(
-          baseUrl: normalized,
+          baseUrl: pairEndpoint,
           token: result.deviceToken,
         );
         initialSnap = fetched.snapshot;
@@ -362,9 +410,12 @@ class AppController extends ChangeNotifier {
       } catch (_) {}
 
       final uri = Uri.parse(normalized);
-      final hostName = hostOs == 'Mac'
-          ? 'Mac · ${uri.host}'
-          : (uri.host.isNotEmpty ? uri.host : 'TernaryCode');
+      final isRelay = PairedHost.isCloudflareRelayUrl(normalized);
+      final hostName = isRelay
+          ? '$hostOs · Cloudflare'
+          : (hostOs == 'Mac'
+              ? 'Mac · ${uri.host}'
+              : (uri.host.isNotEmpty ? uri.host : 'TernaryCode'));
 
       final hostId = 'host-${DateTime.now().millisecondsSinceEpoch}';
       final now = DateTime.now().millisecondsSinceEpoch ~/ 1000;
@@ -372,9 +423,10 @@ class AppController extends ChangeNotifier {
         id: hostId,
         name: hostName,
         baseUrl: normalized,
+        lanUrl: normalizedLan != normalized ? normalizedLan : null,
         deviceId: result.deviceId,
         hostOs: hostOs,
-        via: PairedHost.inferTransport(normalized),
+        via: PairedHost.inferTransport(pairEndpoint),
         online: true,
         latencyMs: latencyMs,
         paneCount: initialSnap.panes.length,
@@ -386,6 +438,8 @@ class AppController extends ChangeNotifier {
       _hosts.removeWhere((h) => h.baseUrl == normalized);
       _hosts.insert(0, newHost);
       _activeHostId = hostId;
+      _activeEndpointHostId = hostId;
+      _activeEndpointUrl = pairEndpoint;
       _locallyOpenedShellIds.clear();
       final filteredInitial = initialSnap.copyWith(
         panes: initialSnap.panes.where((p) => !p.isBareIdleShell).toList(),
@@ -421,6 +475,8 @@ class AppController extends ChangeNotifier {
     if (idx == -1) return;
 
     _activeHostId = hostId;
+    _activeEndpointHostId = null;
+    _activeEndpointUrl = null;
     _hasSnapshotForHost = false;
     _consecutiveFailures = 0;
     _backoffAttempt = 0;
@@ -485,6 +541,8 @@ class AppController extends ChangeNotifier {
     }
     _hosts = _hosts.where((h) => h.id != host.id).toList();
     _activeHostId = _hosts.isEmpty ? null : _hosts.first.id;
+    _activeEndpointHostId = null;
+    _activeEndpointUrl = null;
     _snapshot = const CompanionSnapshot();
     _hasSnapshotForHost = false;
     _consecutiveFailures = 0;
@@ -545,32 +603,67 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       }
 
-      // Fetch immediate snapshot for instant latency & state before SSE stream ticks.
-      try {
-        final initial =
-            await _api.fetchState(baseUrl: host.baseUrl, token: token);
-        if (_disposed || activeHost?.id != host.id) return;
-        _applySnapshot(host.id, initial.snapshot, latencyMs: initial.latencyMs);
-        _phase = ConnectionPhase.connected;
-        _hasSnapshotForHost = true;
-        _backoffAttempt = 0;
-        _consecutiveFailures = 0;
-        _lastStreamActivityAt = DateTime.now();
-        _connectionError = null;
-        notifyListeners();
-      } on CompanionApiException catch (e) {
-        if (_disposed || activeHost?.id != host.id) return;
-        if (e.isUnauthorized) {
-          _markRevoked(host.id, e.message);
+      // Hybrid LAN + Cloudflare Relay probe:
+      // Prefer direct Wi-Fi LAN (fast 1.5s probe, 0 Cloudflare quota) whenever
+      // a `lanUrl` is stored, seamlessly falling back to `host.baseUrl` (Relay)
+      // when away on 4G/5G or another network.
+      String chosenUrl = host.baseUrl;
+      StateFetchResult? initial;
+      if (host.lanUrl != null &&
+          host.lanUrl!.isNotEmpty &&
+          host.lanUrl != host.baseUrl) {
+        try {
+          initial = await _api.fetchState(
+            baseUrl: host.lanUrl!,
+            token: token,
+            timeout: const Duration(milliseconds: 1500),
+          );
+          chosenUrl = host.lanUrl!;
+        } on CompanionApiException catch (e) {
+          if (_disposed || activeHost?.id != host.id) return;
+          if (e.isUnauthorized) {
+            _markRevoked(host.id, e.message);
+            return;
+          }
+          // LAN unreachable (likely on cellular/remote Wi-Fi) — fall back to Relay.
+        }
+      }
+
+      if (initial == null) {
+        try {
+          initial = await _api.fetchState(baseUrl: host.baseUrl, token: token);
+          chosenUrl = host.baseUrl;
+        } on CompanionApiException catch (e) {
+          if (_disposed || activeHost?.id != host.id) return;
+          if (e.isUnauthorized) {
+            _markRevoked(host.id, e.message);
+            return;
+          }
+          _scheduleReconnect(host.id, e.message);
           return;
         }
-        _scheduleReconnect(host.id, e.message);
-        return;
       }
+
+      if (_disposed || activeHost?.id != host.id) return;
+      _activeEndpointHostId = host.id;
+      _activeEndpointUrl = chosenUrl;
+      final activeVia = PairedHost.inferTransport(chosenUrl);
+      _hosts = _hosts
+          .map((h) => h.id == host.id ? h.copyWith(via: activeVia) : h)
+          .toList();
+
+      _applySnapshot(host.id, initial.snapshot, latencyMs: initial.latencyMs);
+      _phase = ConnectionPhase.connected;
+      _hasSnapshotForHost = true;
+      _backoffAttempt = 0;
+      _consecutiveFailures = 0;
+      _lastStreamActivityAt = DateTime.now();
+      _connectionError = null;
+      notifyListeners();
 
       _sseSub = _api
           .subscribeEvents(
-        baseUrl: host.baseUrl,
+        baseUrl: chosenUrl,
         token: token,
         onKeepAlive: () {
           if (_disposed || activeHost?.id != host.id) return;
@@ -829,7 +922,7 @@ class AppController extends ChangeNotifier {
 
     try {
       await _api.sendQuickAction(
-        baseUrl: host.baseUrl,
+        baseUrl: _effectiveBaseUrl(host),
         token: token,
         paneId: paneId,
         action: action,
@@ -866,7 +959,7 @@ class AppController extends ChangeNotifier {
     if (token == null) return;
     try {
       await _api.refreshProjectSessions(
-        baseUrl: host.baseUrl,
+        baseUrl: _effectiveBaseUrl(host),
         token: token,
         projectId: projectId,
       );
@@ -1020,7 +1113,7 @@ class AppController extends ChangeNotifier {
         final payload =
             clean.contains('\n') ? '\x1B[200~$clean\x1B[201~' : clean;
         await _api.sendInput(
-          baseUrl: host.baseUrl,
+          baseUrl: _effectiveBaseUrl(host),
           token: token,
           paneId: paneId,
           text: payload,
@@ -1031,7 +1124,7 @@ class AppController extends ChangeNotifier {
         }
         if (_disposed || activeHost?.id != host.id) return;
         await _api.sendInput(
-          baseUrl: host.baseUrl,
+          baseUrl: _effectiveBaseUrl(host),
           token: token,
           paneId: paneId,
           text: '',
@@ -1039,7 +1132,7 @@ class AppController extends ChangeNotifier {
         );
       } else {
         await _api.sendInput(
-          baseUrl: host.baseUrl,
+          baseUrl: _effectiveBaseUrl(host),
           token: token,
           paneId: paneId,
           text: clean,
@@ -1068,7 +1161,7 @@ class AppController extends ChangeNotifier {
 
     try {
       await _api.switchProfile(
-        baseUrl: host.baseUrl,
+        baseUrl: _effectiveBaseUrl(host),
         token: token,
         paneId: paneId,
         profileId: profileId,
@@ -1145,7 +1238,7 @@ class AppController extends ChangeNotifier {
 
     try {
       await _api.resumeSession(
-        baseUrl: host.baseUrl,
+        baseUrl: _effectiveBaseUrl(host),
         token: token,
         projectId: targetId,
         agent: session.agent,
@@ -1226,7 +1319,7 @@ class AppController extends ChangeNotifier {
 
     try {
       await _api.spawnAgent(
-        baseUrl: host.baseUrl,
+        baseUrl: _effectiveBaseUrl(host),
         token: token,
         projectId: targetId,
         agent: agent,
@@ -1264,7 +1357,7 @@ class AppController extends ChangeNotifier {
 
     try {
       await _api.closePane(
-        baseUrl: host.baseUrl,
+        baseUrl: _effectiveBaseUrl(host),
         token: token,
         paneId: pane.id,
       );
