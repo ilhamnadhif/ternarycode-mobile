@@ -35,10 +35,13 @@ class _HostSwitcherBody extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final c = context.slate;
-    final activeId = controller.activeHost?.id;
     final bottomPad = MediaQuery.of(context).padding.bottom;
 
-    return Container(
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) {
+        final activeId = controller.activeHost?.id;
+        return Container(
       decoration: BoxDecoration(
         color: c.overlay,
         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
@@ -137,6 +140,8 @@ class _HostSwitcherBody extends StatelessWidget {
           ),
         ],
       ),
+        );
+      },
     );
   }
 }

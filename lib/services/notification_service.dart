@@ -53,9 +53,10 @@ class AndroidNotificationService implements NotificationBackend {
           final payloadStr = resp.payload;
           if (payloadStr == null || payloadStr.isEmpty) return;
           try {
-            final map = jsonDecode(payloadStr) as Map<String, dynamic>;
-            final paneId = (map['paneId'] as num?)?.toInt() ?? 0;
-            final nextProfile = map['profileId'] as String?;
+            final decoded = jsonDecode(payloadStr);
+            if (decoded is! Map<String, dynamic>) return;
+            final paneId = (decoded['paneId'] as num?)?.toInt() ?? 0;
+            final nextProfile = decoded['profileId'] as String?;
             final act = resp.actionId ?? 'open';
             await onAction(act, paneId, profileId: nextProfile);
           } catch (_) {}

@@ -17,6 +17,7 @@ void main() {
   String expectedPairCode = 'K7M9-P2X4-Q8R2';
   String? issuedToken;
   bool tokenRevoked = false;
+  bool serveHtml200 = false;
   final receivedActions = <Map<String, dynamic>>[];
   final sseSinks = <HttpResponse>[];
 
@@ -115,6 +116,7 @@ void main() {
   setUp(() async {
     issuedToken = null;
     tokenRevoked = false;
+    serveHtml200 = false;
     receivedActions.clear();
     sseSinks.clear();
 
@@ -126,6 +128,14 @@ void main() {
       final bodyStr = await utf8.decoder.bind(req).join();
 
       if (req.method == 'POST' && path == '/api/pair') {
+        if (serveHtml200) {
+          req.response
+            ..statusCode = 200
+            ..headers.contentType = ContentType.html
+            ..write('<html><body>Captive portal</body></html>');
+          await req.response.close();
+          return;
+        }
         final data = jsonDecode(bodyStr) as Map<String, dynamic>;
         final code = (data['token'] as String? ?? '').toUpperCase().replaceAll('-', '');
         final exp = expectedPairCode.replaceAll('-', '');
@@ -519,6 +529,35 @@ Enter to confirm · Esc to cancel
       isTrue,
     );
     expect(ctrl.snapshot.panes.any((p) => p.id == 101), isFalse);
+
+    // 6. Malformed UTF-8 bytes in SSE stream must NOT crash or tear down SSE
+    sseSinks.first.add([
+      ...utf8.encode('data: {"host_os":"Mac","failover_mode":"auto","projects":[],"panes":[{"id":1,"project_id":1,"project_name":"storefront","label":"Claude Code","provider":"Claude Code","status":"running","status_label":"Running","output":"ok '),
+      0xFF,
+      0xFE,
+      ...utf8.encode(' still-alive"}],"profiles":[],"alerts":[]}\n\n'),
+    ]);
+    await sseSinks.first.flush();
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    expect(ctrl.phase, ConnectionPhase.connected);
+    expect(ctrl.snapshot.panes.first.output, contains('still-alive'));
+
+    // 7. Disabling keepAlive disconnects SSE on pause and reconnects cleanly on resume
+    await ctrl.updateSettings(ctrl.settings.copyWith(keepAlive: false));
+    ctrl.onAppLifecycleChanged(AppLifecycleState.paused);
+    await Future<void>.delayed(const Duration(milliseconds: 80));
+    ctrl.onAppLifecycleChanged(AppLifecycleState.resumed);
+    await Future<void>.delayed(const Duration(milliseconds: 220));
+    expect(ctrl.phase, ConnectionPhase.connected);
+
+    // 8. Non-JSON HTTP 200 HTML response on /api/pair returns clean error instead of crashing
+    serveHtml200 = true;
+    final htmlErr = await ctrl.pairHost(
+      rawUrl: baseUrl,
+      code: expectedPairCode,
+      deviceName: 'Captive Test',
+    );
+    expect(htmlErr, contains('Malformed pairing response'));
 
     ctrl.dispose();
   });

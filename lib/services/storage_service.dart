@@ -36,8 +36,9 @@ class DeviceStorageService implements StorageBackend {
     final raw = prefs.getString(_hostsKey);
     if (raw == null || raw.isEmpty) return const [];
     try {
-      final list = jsonDecode(raw) as List;
-      return list
+      final decoded = jsonDecode(raw);
+      if (decoded is! List) return const [];
+      return decoded
           .whereType<Map<String, dynamic>>()
           .map(PairedHost.fromJson)
           .toList();

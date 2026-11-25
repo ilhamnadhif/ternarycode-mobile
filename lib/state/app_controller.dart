@@ -52,7 +52,7 @@ class AppController extends ChangeNotifier {
   ApkReleaseInfo? _availableUpdate;
   ApkReleaseInfo? get availableUpdate => _availableUpdate;
 
-  String _appVersion = '0.3.6';
+  String _appVersion = '0.3.7';
   String get appVersion => _appVersion;
 
   bool _bootstrapped = false;
@@ -119,6 +119,7 @@ class AppController extends ChangeNotifier {
   StreamSubscription<CompanionSnapshot>? _sseSub;
   Timer? _reconnectTimer;
   Timer? _countdownTimer;
+  Timer? _demoActionTimer;
   int _backoffAttempt = 0;
   int _consecutiveFailures = 0;
   bool _hasSnapshotForHost = false;
@@ -1365,7 +1366,8 @@ class AppController extends ChangeNotifier {
       showToast('Approved ${pane.projectName} · ${pane.label}');
       notifyListeners();
 
-      Timer(const Duration(milliseconds: 1200), () {
+      _demoActionTimer?.cancel();
+      _demoActionTimer = Timer(const Duration(milliseconds: 1200), () {
         if (_disposed || !isDemoMode) return;
         final curPanes = List<CompanionPane>.of(_snapshot.panes);
         final i = curPanes.indexWhere((p) => p.id == paneId);
@@ -1450,6 +1452,7 @@ class AppController extends ChangeNotifier {
     _disposed = true;
     _cancelStream();
     _toastTimer?.cancel();
+    _demoActionTimer?.cancel();
     _api.dispose();
     updater.dispose();
     super.dispose();

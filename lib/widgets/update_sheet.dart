@@ -128,8 +128,16 @@ class _ApkUpdateSheetBodyState extends State<_ApkUpdateSheetBody> {
 
   Future<void> _openGithub() async {
     final uri = Uri.tryParse(widget.release.releaseUrl);
-    if (uri != null) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (uri == null) return;
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok && mounted) {
+        widget.onToast('Could not open browser for GitHub release');
+      }
+    } catch (_) {
+      if (mounted) {
+        widget.onToast('Could not open browser for GitHub release');
+      }
     }
   }
 

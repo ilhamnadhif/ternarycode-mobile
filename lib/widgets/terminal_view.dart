@@ -75,7 +75,8 @@ class _TerminalOutputViewState extends State<TerminalOutputView> {
       oldWidget.controller?.removeListener(_handleScroll);
       _scrollCtrl.addListener(_handleScroll);
     }
-    if (oldWidget.paneId != widget.paneId) {
+    if (oldWidget.paneId != widget.paneId ||
+        (oldWidget.output.trim().isEmpty && widget.output.trim().isNotEmpty)) {
       _stickToBottom = true;
       _scrolledUp = false;
       _scheduleScrollToBottom(force: true);
@@ -386,6 +387,10 @@ class _TerminalOutputViewState extends State<TerminalOutputView> {
         Positioned.fill(
           child: NotificationListener<ScrollMetricsNotification>(
             onNotification: (n) {
+              // Ignore metrics bubbling up from nested horizontal table/wrap scrollers!
+              if (n.depth != 0 || n.metrics.axis != Axis.vertical) {
+                return false;
+              }
               if (_stickToBottom && !_jumping && _scrollCtrl.hasClients) {
                 final max = n.metrics.maxScrollExtent;
                 if (max > 0 && (n.metrics.pixels - max).abs() > 2) {

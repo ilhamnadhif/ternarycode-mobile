@@ -44,6 +44,15 @@ class LiveScreen extends StatefulWidget {
 class _LiveScreenState extends State<LiveScreen> {
   final TextEditingController _promptCtrl = TextEditingController();
   bool _showQuickKeys = false;
+  String? _cachedPromptOutput;
+  InteractivePrompt? _cachedPrompt;
+
+  InteractivePrompt? _promptFor(String output) {
+    if (_cachedPromptOutput == output) return _cachedPrompt;
+    _cachedPromptOutput = output;
+    _cachedPrompt = InteractivePromptParser.parse(output);
+    return _cachedPrompt;
+  }
 
   @override
   void dispose() {
@@ -185,7 +194,7 @@ class _LiveScreenState extends State<LiveScreen> {
       );
     }
 
-    final interactivePrompt = InteractivePromptParser.parse(pane.output);
+    final interactivePrompt = _promptFor(pane.output);
     final keysVisible = _showQuickKeys;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final dotColor = hostOnline

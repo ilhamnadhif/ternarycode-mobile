@@ -196,6 +196,21 @@ Normal prose paragraph stays wrapped.
       expect(lines[7].isTableLine, isTrue);
       expect(lines[8].isHorizontalRule, isFalse);
       expect(lines[8].isTableLine, isFalse);
+
+      // Bare idle prompt (`❯`) gets accent styling and 2-column borderless tables
+      // adjacent to `───┼───` borders are promoted into the table block.
+      const borderlessAndBare = '''
+❯
+Service │ Status
+────────┼────────
+gemezz  │ OK
+''';
+      final bLines = AnsiTerminalParser.parse(borderlessAndBare, SlateColors.dark);
+      expect(bLines[0].isPromptBand, isTrue);
+      expect(bLines[0].spans.single.style?.color, SlateColors.dark.accentText);
+      expect(bLines[1].isTableLine, isTrue);
+      expect(bLines[2].isTableLine, isTrue);
+      expect(bLines[3].isTableLine, isTrue);
     });
   });
 
@@ -216,6 +231,7 @@ Normal prose paragraph stays wrapped.
         '├──────────┼─────────────────────────┼─────────┼───────┤',
         '│ gemezz   │ AE - Etisalat           │ 400     │ 0     │',
         '└──────────┴─────────────────────────┴─────────┴───────┘',
+        for (var j = 1; j <= 10; j++) 'Trailing summary line $j',
         'FINAL_BOTTOM_LINE_MARKER',
       ].join('\n');
 
@@ -269,6 +285,24 @@ Normal prose paragraph stays wrapped.
       await tester.pumpAndSettle();
       expect(find.text('Latest'), findsNothing);
       expect(ctrl.offset, closeTo(ctrl.position.maxScrollExtent, 2.0));
+
+      // Scroll slightly up so we're reading a table, then verify nested horizontal
+      // scroll metrics do NOT yank vertical scroll back down!
+      final readingPos = (ctrl.position.maxScrollExtent - 140).clamp(0.0, ctrl.position.maxScrollExtent);
+      ctrl.jumpTo(readingPos);
+      await tester.pumpAndSettle();
+      expect(find.text('Latest'), findsOneWidget);
+      await tester.drag(
+        find.byWidgetPredicate(
+          (w) =>
+              w is SingleChildScrollView &&
+              w.scrollDirection == Axis.horizontal,
+        ),
+        const Offset(-60, 0),
+      );
+      await tester.pumpAndSettle();
+      expect(ctrl.offset, closeTo(readingPos, 4.0));
+      expect(find.text('Latest'), findsOneWidget);
     });
   });
 }

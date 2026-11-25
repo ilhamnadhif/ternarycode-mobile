@@ -29,6 +29,15 @@ class FullscreenTerminalScreen extends StatefulWidget {
 
 class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
   final TextEditingController _promptCtrl = TextEditingController();
+  String? _cachedPromptOutput;
+  InteractivePrompt? _cachedPrompt;
+
+  InteractivePrompt? _promptFor(String output) {
+    if (_cachedPromptOutput == output) return _cachedPrompt;
+    _cachedPromptOutput = output;
+    _cachedPrompt = InteractivePromptParser.parse(output);
+    return _cachedPrompt;
+  }
 
   @override
   void dispose() {
@@ -49,9 +58,8 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                 .firstOrNull ??
             ctrl.selectedPane;
         final settings = ctrl.settings;
-        final interactivePrompt = pane != null
-            ? InteractivePromptParser.parse(pane.output)
-            : null;
+        final interactivePrompt =
+            pane != null ? _promptFor(pane.output) : null;
         final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 100;
 
         return Scaffold(

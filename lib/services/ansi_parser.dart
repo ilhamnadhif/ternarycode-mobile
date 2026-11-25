@@ -395,7 +395,22 @@ class AnsiTerminalParser {
         continue;
       }
 
-      // 5. User prompt lines (`❯ fix tests`, `> hai`) get a crisp subtle band
+      // 5. User prompt lines (`❯ fix tests`, `> hai`) & bare idle prompt (`❯`)
+      if (trimmed == '❯' || trimmed == '›') {
+        result.add(TerminalLineData(
+          isPromptBand: true,
+          spans: [
+            TextSpan(
+              text: rawLine,
+              style: baseStyle.copyWith(
+                color: c.accentText,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ));
+        continue;
+      }
       final leadPrompt = _leadPromptRegex.firstMatch(rawLine);
       if (leadPrompt != null && !trimmed.startsWith('>>')) {
         result.add(TerminalLineData(
@@ -593,6 +608,27 @@ class AnsiTerminalParser {
         isTableLine: _isBoxTableLine(rawLine, trimmed),
         spans: _styleRegularLine(rawLine, baseStyle, c),
       ));
+    }
+
+    // Second pass: promote single-pipe 2-column table rows (`Key │ Value`) that
+    // sit directly adjacent to box-drawing table borders so borderless CLI tables
+    // stay aligned inside the same horizontal scroll block.
+    for (var i = 0; i < result.length; i++) {
+      if (result[i].isTableLine) continue;
+      final text = result[i].spans.map((s) => s.text ?? '').join();
+      if (!text.contains('│') && !text.contains('┃')) continue;
+      final prevIsTable = i > 0 && result[i - 1].isTableLine;
+      final nextIsTable = i + 1 < result.length && result[i + 1].isTableLine;
+      if (prevIsTable || nextIsTable) {
+        final cur = result[i];
+        result[i] = TerminalLineData(
+          spans: cur.spans,
+          background: cur.background,
+          isPromptBand: cur.isPromptBand,
+          isHorizontalRule: false,
+          isTableLine: true,
+        );
+      }
     }
 
     return result;

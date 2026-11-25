@@ -201,9 +201,17 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                             label: _torchOn ? 'Torch on' : 'Torch',
                             active: _torchOn,
                             onTap: () async {
-                              await _scanner?.toggleTorch();
-                              if (mounted) {
-                                setState(() => _torchOn = !_torchOn);
+                              try {
+                                await _scanner?.toggleTorch();
+                                if (mounted) {
+                                  setState(() => _torchOn = !_torchOn);
+                                }
+                              } catch (_) {
+                                if (mounted) {
+                                  widget.controller.showToast(
+                                    'Torch unavailable on this camera',
+                                  );
+                                }
                               }
                             },
                           ),

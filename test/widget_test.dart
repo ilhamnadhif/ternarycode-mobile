@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ternarycode_mobile/app.dart';
+import 'package:ternarycode_mobile/models/host_models.dart';
+import 'package:ternarycode_mobile/screens/notification_preview_screen.dart';
 import 'package:ternarycode_mobile/services/companion_api.dart';
 import 'package:ternarycode_mobile/services/notification_service.dart';
 import 'package:ternarycode_mobile/services/interactive_prompt_parser.dart';
@@ -325,5 +327,80 @@ void main() {
     await tester.tap(find.text('Esc'));
     await tester.pump();
     expect(cancelled, isTrue);
+  });
+
+  testWidgets('Deep audit regression: Projects search sync/clear, live preview safety & last-host unpair',
+      (tester) async {
+    tester.view.physicalSize = const Size(390, 844);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(() {
+      tester.view.resetPhysicalSize();
+      tester.view.resetDevicePixelRatio();
+    });
+
+    // 1. Projects search field syncs with openAlertProject() and clears cleanly
+    final ctrl = await buildController();
+    addTearDown(ctrl.dispose);
+    await ctrl.enterDemoMode();
+
+    await tester.pumpWidget(
+      TernaryCodeApp(controller: ctrl, disableCameraForTests: true),
+    );
+    await tester.pump();
+
+    ctrl.openAlertProject('docs-site');
+    await tester.pump();
+    expect(ctrl.tabIndex, 2);
+    final field = tester.widget<TextField>(find.byType(TextField).last);
+    expect(field.controller?.text, 'docs-site');
+    expect(find.text('IDLE · 1'), findsOneWidget);
+
+    // 2. Unpairing ALL remaining hosts from Settings cleanly returns to Welcome with 0 deactivated-context crash
+    for (var i = 0; i < 2; i++) {
+      await ctrl.unpairActiveHost();
+    }
+    expect(ctrl.hosts.length, 1);
+    await tester.pump();
+    await tester.tap(find.byTooltip('Settings').last);
+    await pumpRoute(tester);
+    await tester.scrollUntilVisible(find.text('Unpair this device'), 200);
+    await tester.tap(find.text('Unpair this device'));
+    await pumpRoute(tester);
+    expect(ctrl.isPaired, isFalse);
+    expect(find.text('Pair with TernaryCode'), findsOneWidget);
+
+    // 3. NotificationPreviewScreen on a live (non-demo) host NEVER sends real quick actions
+    final liveStorage = InMemoryStorageService();
+    await liveStorage.saveHosts([
+      const PairedHost(
+        id: 'live-1',
+        name: 'Real Mac',
+        baseUrl: 'http://127.0.0.1:1',
+        deviceId: 'dev-1',
+        online: true,
+        isDemo: false,
+      ),
+    ]);
+    await liveStorage.saveActiveHostId('live-1');
+    final liveCtrl = AppController(
+      api: CompanionApi(),
+      storage: liveStorage,
+      notifications: NoopNotificationService(),
+    );
+    addTearDown(liveCtrl.dispose);
+    await liveCtrl.init();
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: SlateTheme.build(Brightness.dark),
+        home: NotificationPreviewScreen(controller: liveCtrl),
+      ),
+    );
+    await tester.pump();
+    await tester.tap(find.text('Approve'));
+    await tester.pump();
+    expect(liveCtrl.toastMessage, contains('Preview only'));
+
+    await tester.pump(const Duration(seconds: 3));
   });
 }
