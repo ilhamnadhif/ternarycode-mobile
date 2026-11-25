@@ -243,6 +243,12 @@ class DemoFixtures {
             ),
           ],
         ),
+        CompanionProject(
+          id: 4,
+          name: 'zain-iq',
+          branch: 'master',
+          sessions: [],
+        ),
       ],
       profiles: [
         CompanionProfile(

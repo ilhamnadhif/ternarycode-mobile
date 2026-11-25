@@ -68,27 +68,31 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    // Screen 05 · Live Terminal (Needs input)
+    // Screen 05 · Live Terminal (Needs input) — active context bar opens Projects → Active
     expect(find.text('Live'), findsWidgets);
     expect(find.text('storefront'), findsWidgets);
+    expect(find.text('4 active'), findsOneWidget);
     expect(find.text('Approve'), findsOneWidget);
     expect(find.text('Reject'), findsOneWidget);
     expect(find.text('Stop'), findsOneWidget);
 
-    // Screen 06 · Switch to api-gateway (Rate limited) and perform 1-tap failover
-    await tester.drag(find.byType(ListView).first, const Offset(-160, 0));
+    // Tap active context bar -> jumps straight to Projects tab with ACTIVE list at top
+    await tester.tap(find.text('4 active'));
     await tester.pump();
-    await tester.tap(find.text('api-gateway'));
+    expect(find.text('ACTIVE · 4'), findsOneWidget);
+
+    // Screen 06 · Select api-gateway from ACTIVE list and perform 1-tap failover
+    await tester.tap(find.text('api-gateway').first);
     await tester.pump();
     expect(find.text('Resume claude2'), findsOneWidget);
     await tester.tap(find.text('Resume claude2'));
     await tester.pump();
     expect(find.textContaining('Resuming api-gateway on claude2'), findsOneWidget);
 
-    // Screen 07 · Switch to ternarycode (Running + Switch account chips)
-    await tester.drag(find.byType(ListView).first, const Offset(-320, 0));
+    // Screen 07 · Select ternarycode from ACTIVE list (Running + Switch account chips)
+    await tester.tap(find.text('Projects'));
     await tester.pump();
-    await tester.tap(find.text('ternarycode'));
+    await tester.tap(find.text('ternarycode').first);
     await tester.pump();
     expect(find.text('SWITCH ACCOUNT'), findsOneWidget);
 
@@ -131,14 +135,28 @@ void main() {
     await tester.tap(find.byTooltip('Back'));
     await pumpRoute(tester);
 
-    // Screen 11 · Projects & search filter
+    // Screen 11 · Projects search + spawn new agent on project with 0 prior sessions (zain-iq)
     await tester.tap(find.text('Projects'));
     await tester.pump();
-    expect(find.text('storefront'), findsWidgets);
-    await tester.enterText(
-        find.byType(TextField).last, 'ternarycode');
+    expect(find.text('ACTIVE · 4'), findsOneWidget);
+    await tester.enterText(find.byType(TextField).last, 'zain-iq');
     await tester.pump();
-    expect(find.text('Audit 53 bugs across workspace'), findsOneWidget);
+    expect(find.text('No sessions yet'), findsOneWidget);
+    await tester.tap(find.text('Start agent'));
+    await pumpRoute(tester);
+    expect(find.text('New agent'), findsOneWidget);
+    expect(find.text('Start Claude Code'), findsOneWidget);
+    await tester.tap(find.text('Start Claude Code'));
+    await pumpRoute(tester);
+    expect(ctrl.tabIndex, 0);
+    expect(ctrl.selectedPane?.projectName, 'zain-iq');
+    expect(ctrl.snapshot.panes.length, 5);
+
+    // Clear filter and switch to Accounts
+    await tester.tap(find.text('Projects'));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField).last, '');
+    await tester.pump();
 
     // Screen 12 · Accounts & Quotas
     await tester.tap(find.text('Accounts'));

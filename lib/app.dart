@@ -201,6 +201,7 @@ class _RootShell extends StatelessWidget {
                       onOpenSettings: () => _openSettings(context),
                       onOpenFullscreen: (pane) =>
                           _openFullscreen(context, pane),
+                      onOpenProjects: () => controller.setTab(2),
                       onPairAgain: () => _openQrScanner(context),
                     ),
                     InboxScreen(

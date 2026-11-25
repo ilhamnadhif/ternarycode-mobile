@@ -333,6 +333,36 @@ class CompanionApi {
     );
   }
 
+  /// Spawns a new agent (or `'shell'` terminal) inside `projectId` on desktop (`v0.3.14+`).
+  Future<void> spawnAgent({
+    required String baseUrl,
+    required String token,
+    required int projectId,
+    required String agent,
+    String? profileId,
+  }) async {
+    try {
+      await _postJson(
+        '${_cleanBase(baseUrl)}/api/pane/spawn',
+        token,
+        {
+          'project_id': projectId,
+          'agent': agent,
+          if (profileId != null && profileId.isNotEmpty)
+            'profile_id': profileId,
+        },
+      );
+    } on CompanionApiException catch (e) {
+      if (e.statusCode == 404) {
+        throw const CompanionApiException(
+          'Update TernaryCode desktop to v0.3.14+ to spawn agents from phone.',
+          statusCode: 404,
+        );
+      }
+      rethrow;
+    }
+  }
+
   /// Probes local Wi-Fi `/24` subnet on port 7890 for running TernaryCode desktops.
   Future<List<DiscoveredHost>> discoverLanHosts({int port = 7890}) async {
     final prefixes = <String>{};

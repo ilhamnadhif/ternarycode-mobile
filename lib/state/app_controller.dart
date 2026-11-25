@@ -113,6 +113,10 @@ class AppController extends ChangeNotifier {
   // Deduplication map: paneId -> last notified status signature
   final Map<int, String> _notifiedSignatures = {};
 
+  // Auto-focus newly spawned pane when SSE delivers it
+  int? _pendingSpawnProjectId;
+  Set<int> _paneIdsBeforeSpawn = const {};
+
   Future<void> init() async {
     if (_bootstrapped) return;
     _settings = await _storage.loadSettings();
@@ -462,6 +466,20 @@ class AppController extends ChangeNotifier {
   void _applySnapshot(String hostId, CompanionSnapshot snap, {int? latencyMs}) {
     final prev = _snapshot;
     _snapshot = snap;
+
+    // If user just spawned a new agent on a project, auto-focus the newly created pane.
+    if (_pendingSpawnProjectId != null) {
+      final targetProj = _pendingSpawnProjectId!;
+      final spawned = snap.panes.where(
+        (p) => p.projectId == targetProj && !_paneIdsBeforeSpawn.contains(p.id),
+      );
+      if (spawned.isNotEmpty) {
+        _selectedPaneId = spawned.last.id;
+        _pendingSpawnProjectId = null;
+        _paneIdsBeforeSpawn = const {};
+      }
+    }
+
     if (_selectedPaneId == null ||
         !snap.panes.any((p) => p.id == _selectedPaneId)) {
       _selectedPaneId = snap.panes.isNotEmpty ? snap.panes.first.id : null;
@@ -708,6 +726,99 @@ class AppController extends ChangeNotifier {
       notifyListeners();
     } on CompanionApiException catch (e) {
       showToast(e.message);
+    }
+  }
+
+  /// Spawns a new agent (or plain terminal `'shell'`) inside `project`.
+  Future<void> spawnAgent({
+    required CompanionProject project,
+    required String agent,
+    String? profileId,
+  }) async {
+    _triggerHaptic(strong: true);
+    final label = _agentDisplayLabel(agent);
+
+    if (isDemoMode) {
+      final nextId = _snapshot.panes.fold<int>(0, (m, p) => p.id > m ? p.id : m) + 1;
+      final isShell = agent == 'shell';
+      final chosenProfile = isShell ? null : (profileId ?? _defaultProfileFor(agent));
+      final newPane = CompanionPane(
+        id: nextId,
+        projectId: project.id,
+        projectName: project.name,
+        label: label,
+        branch: project.branch,
+        provider: isShell ? null : label,
+        profile: chosenProfile,
+        supportsProfiles: !isShell && (agent == 'claude' || agent == 'codex' || agent == 'antigravity'),
+        status: 'running',
+        statusLabel: 'Running',
+        message: 'Started $label',
+        age: 'now',
+        output: isShell
+            ? '~/code/${project.name} ${project.branch ?? 'main'} ❯ '
+            : '● Starting $label in ${project.name}…\n◦ Ready for your instruction',
+      );
+      _snapshot = _snapshot.copyWith(panes: [newPane, ..._snapshot.panes]);
+      _selectedPaneId = nextId;
+      _tabIndex = 0;
+      showToast('Started $label in ${project.name}');
+      notifyListeners();
+      return;
+    }
+
+    final host = activeHost;
+    if (host == null) return;
+    final token = await _storage.readToken(host.id);
+    if (token == null) return;
+
+    _pendingSpawnProjectId = project.id;
+    _paneIdsBeforeSpawn = _snapshot.panes
+        .where((p) => p.projectId == project.id)
+        .map((p) => p.id)
+        .toSet();
+
+    try {
+      await _api.spawnAgent(
+        baseUrl: host.baseUrl,
+        token: token,
+        projectId: project.id,
+        agent: agent,
+        profileId: profileId,
+      );
+      _tabIndex = 0;
+      showToast('Starting $label in ${project.name}…');
+      notifyListeners();
+    } on CompanionApiException catch (e) {
+      _pendingSpawnProjectId = null;
+      _paneIdsBeforeSpawn = const {};
+      showToast(e.message);
+    }
+  }
+
+  String? _defaultProfileFor(String agentSlug) {
+    for (final p in _snapshot.profiles) {
+      if (p.enabled && p.agentKey == agentSlug && p.state != 'rate_limited') {
+        return p.id;
+      }
+    }
+    return null;
+  }
+
+  static String _agentDisplayLabel(String slug) {
+    switch (slug) {
+      case 'claude':
+        return 'Claude Code';
+      case 'codex':
+        return 'Codex';
+      case 'antigravity':
+        return 'Antigravity';
+      case 'opencode':
+        return 'OpenCode';
+      case 'gemini':
+        return 'Gemini CLI';
+      default:
+        return 'Terminal';
     }
   }
 

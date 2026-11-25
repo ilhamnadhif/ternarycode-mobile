@@ -239,7 +239,7 @@ void main() {
     expect(ctrl.snapshot.panes.first.status, 'needs_input');
     expect(notifications.sentAlerts, contains('approve:1:storefront'));
 
-    // 4. Send Approve, text prompt, switch-profile, and resume-session
+    // 4. Send Approve, text prompt, switch-profile, resume-session, and spawn-agent
     await ctrl.sendQuickAction(1, 'approve');
     await ctrl.sendTerminalInput(1, 'run tests', enter: true);
     await ctrl.switchProfile(1, 'claude2');
@@ -247,8 +247,13 @@ void main() {
       project: ctrl.snapshot.projects.first,
       session: ctrl.snapshot.projects.first.sessions.first,
     );
+    await ctrl.spawnAgent(
+      project: ctrl.snapshot.projects.first,
+      agent: 'claude',
+      profileId: 'claude2',
+    );
 
-    expect(receivedActions.length, 4);
+    expect(receivedActions.length, 5);
     expect(receivedActions[0]['path'], '/api/pane/1/input');
     expect(receivedActions[0]['body'], {'action': 'approve'});
     expect(receivedActions[1]['body'], {'text': 'run tests', 'enter': true});
@@ -256,6 +261,12 @@ void main() {
     expect(receivedActions[2]['body'], {'profile_id': 'claude2'});
     expect(receivedActions[3]['path'], '/api/session/resume');
     expect(receivedActions[3]['body']['session_id'], 'sess-99');
+    expect(receivedActions[4]['path'], '/api/pane/spawn');
+    expect(receivedActions[4]['body'], {
+      'project_id': 1,
+      'agent': 'claude',
+      'profile_id': 'claude2',
+    });
 
     // 5. Revoke token on server and retry -> enters ConnectionPhase.revoked
     tokenRevoked = true;

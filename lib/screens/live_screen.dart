@@ -9,9 +9,12 @@ import '../theme/slate_theme.dart';
 import '../theme/slate_tokens.dart';
 import '../widgets/host_switcher_sheet.dart';
 import '../widgets/slate_widgets.dart';
+import '../widgets/spawn_agent_sheet.dart';
 import '../widgets/terminal_view.dart';
 
 /// Screens 05, 06, 07 · Live Terminal & Agent Control.
+/// Switching active agents/projects happens cleanly via the `Projects` tab
+/// (no cramped horizontal top chip strip), giving the terminal maximum room.
 class LiveScreen extends StatefulWidget {
   const LiveScreen({
     super.key,
@@ -19,6 +22,7 @@ class LiveScreen extends StatefulWidget {
     required this.onOpenHosts,
     required this.onOpenSettings,
     required this.onOpenFullscreen,
+    required this.onOpenProjects,
     required this.onPairAgain,
   });
 
@@ -26,6 +30,7 @@ class LiveScreen extends StatefulWidget {
   final VoidCallback onOpenHosts;
   final VoidCallback onOpenSettings;
   final ValueChanged<CompanionPane> onOpenFullscreen;
+  final VoidCallback onOpenProjects;
   final VoidCallback onPairAgain;
 
   @override
@@ -51,6 +56,13 @@ class _LiveScreenState extends State<LiveScreen> {
       enter: true,
       toastLabel: 'Instruction sent',
     );
+  }
+
+  CompanionProject? _projectForPane(CompanionSnapshot snap, CompanionPane pane) {
+    for (final pr in snap.projects) {
+      if (pr.id == pane.projectId) return pr;
+    }
+    return snap.projects.isNotEmpty ? snap.projects.first : null;
   }
 
   @override
@@ -117,75 +129,90 @@ class _LiveScreenState extends State<LiveScreen> {
                     Text(
                       ctrl.phase == ConnectionPhase.connecting
                           ? 'Connecting to ${host?.name ?? 'host'}…'
-                          : 'No live terminal panes open',
+                          : 'No active agents running',
                       style: SlateTypography.body(c, weight: FontWeight.w500),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 6),
                     Text(
-                      'Start an agent on your computer or resume one in Projects.',
+                      'Pick a project or spawn a new agent in Projects.',
                       textAlign: TextAlign.center,
                       style: SlateTypography.body2(c),
+                    ),
+                    const SizedBox(height: 14),
+                    SlateButton(
+                      label: 'Open Projects',
+                      icon: PhosphorIconsRegular.squaresFour,
+                      variant: SlateButtonVariant.secondary,
+                      height: 38,
+                      onPressed: widget.onOpenProjects,
                     ),
                   ],
                 ),
               ),
             )
           else ...[
-            // Horizontal pane chips
-            SizedBox(
-              height: 32,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: snap.panes.length,
-                separatorBuilder: (_, _) => const SizedBox(width: 6),
-                itemBuilder: (_, i) {
-                  final p = snap.panes[i];
-                  final active = p.id == pane.id;
-                  return Material(
+            // Clean single-line active context bar (tap to open Projects → Active list)
+            Row(
+              children: [
+                Expanded(
+                  child: Material(
                     color: Colors.transparent,
                     child: InkWell(
-                      onTap: () => ctrl.selectPane(p.id),
-                      borderRadius: BorderRadius.circular(15),
+                      onTap: widget.onOpenProjects,
+                      borderRadius: BorderRadius.circular(10),
                       child: Ink(
-                        padding: const EdgeInsets.only(left: 9, right: 11),
+                        height: 36,
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
                         decoration: BoxDecoration(
-                          color: active ? c.raised : c.hover,
-                          borderRadius: BorderRadius.circular(15),
-                          border: Border.all(
-                            color: active ? c.line : Colors.transparent,
-                          ),
+                          color: c.raised,
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: c.lineSubtle),
                         ),
                         child: Row(
-                          mainAxisSize: MainAxisSize.min,
                           children: [
-                            StatusGlyph(status: p.effectiveStatus, size: 12),
-                            const SizedBox(width: 6),
-                            Text(
-                              p.projectName,
-                              style: TextStyle(
-                                fontFamily: 'Inter',
-                                fontSize: 12,
-                                fontWeight:
-                                    active ? FontWeight.w500 : FontWeight.w400,
-                                color: active ? c.text : c.text2,
+                            ProjectAvatar(name: pane.projectName, size: 20),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                pane.projectName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: SlateTypography.body(c,
+                                    weight: FontWeight.w500),
                               ),
                             ),
-                            const SizedBox(width: 5),
+                            const SizedBox(width: 8),
                             Text(
-                              p.label,
-                              style: TextStyle(
-                                fontFamily: 'Inter',
-                                fontSize: 11,
-                                color: c.text3,
-                              ),
+                              '${snap.panes.length} active',
+                              style: SlateTypography.data(c),
                             ),
+                            const SizedBox(width: 4),
+                            Icon(PhosphorIconsRegular.caretRight,
+                                size: 12, color: c.text3),
                           ],
                         ),
                       ),
                     ),
-                  );
-                },
-              ),
+                  ),
+                ),
+                if (_projectForPane(snap, pane) != null) ...[
+                  const SizedBox(width: 8),
+                  SlateIconButton(
+                    icon: PhosphorIconsRegular.plus,
+                    tooltip: 'New agent',
+                    onPressed: () {
+                      final proj = _projectForPane(snap, pane);
+                      if (proj != null) {
+                        showSpawnAgentSheet(
+                          context: context,
+                          controller: ctrl,
+                          project: proj,
+                        );
+                      }
+                    },
+                  ),
+                ],
+              ],
             ),
             const SizedBox(height: 10),
 
@@ -316,7 +343,8 @@ class _LiveScreenState extends State<LiveScreen> {
           status: 'rate_limited',
           leading: const StatusGlyph(
               status: 'rate_limited', size: 16, animate: false),
-          title: '${rl.fromProfile} hit its 5h limit · resets in ${rl.resetsInLabel}',
+          title:
+              '${rl.fromProfile} hit its 5h limit · resets in ${rl.resetsInLabel}',
           body: rl.reason,
         ),
         if (healthy.isNotEmpty) ...[
