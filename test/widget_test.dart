@@ -68,13 +68,29 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    // Screen 05 · Live Terminal (Needs input) — active context bar opens Projects → Active
+    // Screen 05 · Live Terminal (Needs input) — Reader/Raw toggle & collapsible terminal keys
     expect(find.text('Live'), findsWidgets);
     expect(find.text('storefront'), findsWidgets);
     expect(find.text('4 active'), findsOneWidget);
+    expect(find.text('Reader'), findsOneWidget);
+    expect(find.text('Raw'), findsOneWidget);
     expect(find.text('Approve'), findsOneWidget);
     expect(find.text('Reject'), findsOneWidget);
     expect(find.text('Stop'), findsOneWidget);
+
+    // Toggle to Raw mode (reveals quick terminal keys) and back to Reader
+    await tester.tap(find.text('Raw'));
+    await tester.pump();
+    expect(find.text('Esc'), findsOneWidget);
+    await tester.tap(find.text('Reader'));
+    await tester.pump();
+    expect(find.text('Esc'), findsNothing);
+    // Toggle collapsible Terminal keys via keyboard button
+    await tester.tap(find.byTooltip('Terminal keys'));
+    await tester.pump();
+    expect(find.text('Esc'), findsOneWidget);
+    await tester.tap(find.byTooltip('Terminal keys'));
+    await tester.pump();
 
     // Tap active context bar -> jumps straight to Projects tab with ACTIVE list at top
     await tester.tap(find.text('4 active'));

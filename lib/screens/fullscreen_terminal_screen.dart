@@ -6,11 +6,12 @@ import '../state/app_controller.dart';
 import '../theme/agent_icons.dart';
 import '../theme/slate_theme.dart';
 import '../theme/slate_tokens.dart';
+import '../widgets/slate_reader_view.dart';
 import '../widgets/slate_widgets.dart';
 import '../widgets/terminal_view.dart';
 
-/// Screen 08 · Fullscreen Terminal reader with A−/A+ monospace zoom,
-/// wrap toggle, scroll-to-latest pill, Copy, and quick terminal keys.
+/// Screen 08 · Fullscreen Reader / Raw Terminal with A-/A+ text zoom,
+/// Reader/Raw switch, wrap toggle (Raw), scroll-to-latest pill, Copy, and quick keys.
 class FullscreenTerminalScreen extends StatefulWidget {
   const FullscreenTerminalScreen({
     super.key,
@@ -30,6 +31,7 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
   final ScrollController _scrollCtrl = ScrollController();
   final TextEditingController _promptCtrl = TextEditingController();
   bool _showLatestPill = false;
+  bool? _rawOverride;
 
   @override
   void initState() {
@@ -75,6 +77,7 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                 .firstOrNull ??
             ctrl.selectedPane;
         final settings = ctrl.settings;
+        final isRaw = _rawOverride ?? (pane?.agentKey == 'shell');
 
         return Scaffold(
           backgroundColor: c.window,
@@ -125,6 +128,17 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                       ),
                       SlateIconButton(
                         icon: null,
+                        label: isRaw ? 'Raw' : 'Rdr',
+                        tooltip: isRaw
+                            ? 'Switch to Reader view'
+                            : 'Switch to Raw terminal',
+                        small: true,
+                        active: !isRaw,
+                        onPressed: () => setState(() => _rawOverride = !isRaw),
+                      ),
+                      const SizedBox(width: 5),
+                      SlateIconButton(
+                        icon: null,
                         label: 'A-',
                         tooltip: 'Smaller text',
                         small: true,
@@ -148,34 +162,44 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                           ),
                         ),
                       ),
-                      const SizedBox(width: 5),
-                      SlateIconButton(
-                        icon: PhosphorIconsRegular.arrowUDownLeft,
-                        tooltip: 'Toggle line wrap',
-                        small: true,
-                        active: settings.termWrap,
-                        onPressed: () => ctrl.updateSettings(
-                          settings.copyWith(termWrap: !settings.termWrap),
+                      if (isRaw) ...[
+                        const SizedBox(width: 5),
+                        SlateIconButton(
+                          icon: PhosphorIconsRegular.arrowUDownLeft,
+                          tooltip: 'Toggle line wrap',
+                          small: true,
+                          active: settings.termWrap,
+                          onPressed: () => ctrl.updateSettings(
+                            settings.copyWith(termWrap: !settings.termWrap),
+                          ),
                         ),
-                      ),
+                      ],
                     ],
                   ),
                 ),
 
-                // Edge-to-edge terminal canvas
+                // Edge-to-edge Reader or Raw terminal canvas
                 Expanded(
                   child: Container(
-                    color: c.sheet,
+                    color: isRaw ? c.inset : c.sheet,
                     child: Stack(
                       children: [
                         Positioned.fill(
-                          child: TerminalOutputView(
-                            paneId: pane?.id,
-                            controller: _scrollCtrl,
-                            output: pane?.output ?? '',
-                            fontSize: settings.termFontSize,
-                            wrap: settings.termWrap,
-                          ),
+                          child: isRaw || pane == null
+                              ? TerminalOutputView(
+                                  paneId: pane?.id,
+                                  controller: _scrollCtrl,
+                                  output: pane?.output ?? '',
+                                  fontSize: settings.termFontSize,
+                                  wrap: settings.termWrap,
+                                )
+                              : SlateReaderView(
+                                  pane: pane,
+                                  controller: _scrollCtrl,
+                                  onToast: ctrl.showToast,
+                                  fontScale: (settings.termFontSize / 11.5)
+                                      .clamp(0.85, 1.35),
+                                ),
                         ),
                         if (_showLatestPill)
                           Positioned(
@@ -245,10 +269,10 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                           onTab: () => ctrl.sendTerminalInput(pane.id, '\t',
                               enter: false, toastLabel: 'Sent Tab'),
                           onUp: () => ctrl.sendTerminalInput(pane.id, '\x1B[A',
-                              enter: false, toastLabel: 'Sent ↑'),
+                              enter: false, toastLabel: 'Sent Up'),
                           onDown: () => ctrl.sendTerminalInput(
                               pane.id, '\x1B[B',
-                              enter: false, toastLabel: 'Sent ↓'),
+                              enter: false, toastLabel: 'Sent Down'),
                           onCopy: () {
                             Clipboard.setData(ClipboardData(text: pane.output));
                             ctrl.showToast('Copied output to clipboard');

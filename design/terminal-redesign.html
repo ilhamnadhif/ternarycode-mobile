@@ -1,0 +1,1717 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TernaryCode Mobile — Terminal &amp; Live Reader Redesign (Slate)</title>
+<link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+<style>
+@font-face { font-family: "Inter"; font-weight: 400; font-display: swap; src: url("assets/fonts/inter-400.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-weight: 500; font-display: swap; src: url("assets/fonts/inter-500.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-weight: 600; font-display: swap; src: url("assets/fonts/inter-600.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 400; font-display: swap; src: url("assets/fonts/jbm-400.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 500; font-display: swap; src: url("assets/fonts/jbm-500.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-weight: 600; font-display: swap; src: url("assets/fonts/jbm-600.woff2") format("woff2"); }
+
+:root, [data-theme="dark"] {
+  color-scheme: dark;
+  --board-bg: #050507;
+  --board-bar: rgba(9, 9, 11, 0.90);
+  --board-card: #0D0D10;
+  --bezel: rgba(255, 255, 255, 0.13);
+  --bezel-shadow: 0 24px 64px rgba(0, 0, 0, 0.68), 0 2px 10px rgba(0, 0, 0, 0.45);
+
+  --window: #09090B;
+  --sheet: #101013;
+  --raised: #18181C;
+  --overlay: #141417;
+  --inset: #0B0B0D;
+  --code-bg: #16161A;
+
+  --hover: rgba(255, 255, 255, 0.045);
+  --active: rgba(255, 255, 255, 0.08);
+  --line-subtle: rgba(255, 255, 255, 0.06);
+  --line: rgba(255, 255, 255, 0.10);
+  --line-strong: rgba(255, 255, 255, 0.16);
+
+  --text: #EDEDF0;
+  --text-prose: #E1E1E6;
+  --text-2: #A1A1AA;
+  --text-3: #6C6C75;
+  --text-4: #4A4A52;
+
+  --accent: #2E6BE6;
+  --accent-text: #8BB2FF;
+  --accent-tint: rgba(46, 107, 230, 0.14);
+  --accent-border: rgba(139, 178, 255, 0.24);
+  --on-accent: #FFFFFF;
+
+  --running: #6AA5FF;
+  --running-tint: rgba(106, 165, 255, 0.12);
+  --input: #F2B14B;
+  --input-tint: rgba(242, 177, 75, 0.12);
+  --done: #4DC48C;
+  --done-tint: rgba(77, 196, 140, 0.12);
+  --failed: #F06A64;
+  --failed-tint: rgba(240, 106, 100, 0.12);
+  --idle: #767680;
+  --idle-tint: rgba(255, 255, 255, 0.06);
+
+  --diff-add-bg: rgba(77, 196, 140, 0.10);
+  --diff-del-bg: rgba(240, 106, 100, 0.11);
+  --diff-add-fg: #7FD1A0;
+  --diff-del-fg: #F2857F;
+
+  --term-fg: #D9D9DE;
+  --term-dim: #6C6C75;
+  --term-cyan: #6CCFE0;
+  --term-yellow: #E8C268;
+  --claude: #D97757;
+  --user-bubble: #171A22;
+  --user-border: rgba(139, 178, 255, 0.20);
+
+  --sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+  --board-bg: #E1E1E6;
+  --board-bar: rgba(246, 246, 248, 0.92);
+  --board-card: #EAEAEF;
+  --bezel: rgba(0, 0, 0, 0.14);
+  --bezel-shadow: 0 22px 54px rgba(15, 15, 20, 0.13), 0 2px 8px rgba(15, 15, 20, 0.07);
+
+  --window: #EFEFF2;
+  --sheet: #FBFBFC;
+  --raised: #FFFFFF;
+  --overlay: #FFFFFF;
+  --inset: #EAEAEE;
+  --code-bg: #EFEFF3;
+
+  --hover: rgba(0, 0, 0, 0.04);
+  --active: rgba(0, 0, 0, 0.07);
+  --line-subtle: rgba(0, 0, 0, 0.06);
+  --line: rgba(0, 0, 0, 0.10);
+  --line-strong: rgba(0, 0, 0, 0.16);
+
+  --text: #16161A;
+  --text-prose: #232329;
+  --text-2: #565660;
+  --text-3: #7E7E88;
+  --text-4: #A6A6B0;
+
+  --accent: #1F5FBF;
+  --accent-text: #1A56B3;
+  --accent-tint: rgba(31, 95, 191, 0.10);
+  --accent-border: rgba(31, 95, 191, 0.22);
+  --on-accent: #FFFFFF;
+
+  --running: #2563C9;
+  --running-tint: rgba(37, 99, 201, 0.09);
+  --input: #B26A00;
+  --input-tint: rgba(178, 106, 0, 0.09);
+  --done: #15804E;
+  --done-tint: rgba(21, 128, 78, 0.09);
+  --failed: #C7352D;
+  --failed-tint: rgba(199, 53, 45, 0.09);
+  --idle: #7E7E88;
+  --idle-tint: rgba(0, 0, 0, 0.05);
+
+  --diff-add-bg: rgba(21, 128, 78, 0.09);
+  --diff-del-bg: rgba(199, 53, 45, 0.09);
+  --diff-add-fg: #137346;
+  --diff-del-fg: #BC2F28;
+
+  --term-fg: #232329;
+  --term-dim: #7E7E88;
+  --term-cyan: #0F7B8F;
+  --term-yellow: #9E6800;
+  --claude: #C45D3B;
+  --user-bubble: #EDF2FC;
+  --user-border: rgba(31, 95, 191, 0.18);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  background: var(--board-bg);
+  color: var(--text);
+  font-family: var(--sans);
+  -webkit-font-smoothing: antialiased;
+  min-height: 100vh;
+}
+
+/* Studio Top Bar */
+.studio-bar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  min-height: 52px;
+  padding: 8px 18px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  background: var(--board-bar);
+  backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line-subtle);
+}
+.studio-brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.studio-brand img { width: 20px; height: 20px; border-radius: 5px; flex-shrink: 0; }
+.studio-tag {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--accent-text);
+  background: var(--accent-tint);
+  padding: 2px 7px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.studio-spacer { flex: 1; min-width: 8px; }
+.studio-seg {
+  display: inline-flex;
+  background: var(--inset);
+  border: 1px solid var(--line-subtle);
+  padding: 3px;
+  border-radius: 8px;
+  gap: 2px;
+  flex-shrink: 0;
+}
+.studio-seg button {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font-family: var(--sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.studio-seg button.on {
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+.studio-btn {
+  height: 29px;
+  padding: 0 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--text-2);
+  font-family: var(--sans);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.studio-btn:hover { color: var(--text); border-color: var(--line-strong); }
+.studio-btn b { color: var(--text); font-weight: 600; }
+
+/* Intro Strip */
+.hero {
+  max-width: 1420px;
+  margin: 0 auto;
+  padding: 24px 24px 8px;
+}
+.hero h1 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+.hero p {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-2);
+  max-width: 820px;
+}
+.pillars {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+.pillar {
+  background: var(--board-card);
+  border: 1px solid var(--line-subtle);
+  border-radius: 10px;
+  padding: 11px 13px;
+}
+.pillar-k {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--accent-text);
+  margin-bottom: 3px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.pillar-t {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+.pillar-d {
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-2);
+}
+
+/* Board Grid */
+.board {
+  max-width: 1420px;
+  margin: 0 auto;
+  padding: 22px 24px 64px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 32px 28px;
+}
+.phone-col {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 11px;
+}
+.phone-meta {
+  width: 390px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 4px;
+}
+.phone-meta .num {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+.phone-meta .label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.phone-meta .badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 5px;
+}
+.badge-old { background: var(--failed-tint); color: var(--failed); }
+.badge-new { background: var(--done-tint); color: var(--done); }
+.badge-alt { background: var(--accent-tint); color: var(--accent-text); }
+.phone-caption {
+  width: 390px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text-2);
+  padding: 0 4px;
+}
+
+/* Android Phone Frame (390 x 844) */
+.phone {
+  width: 390px;
+  height: 820px;
+  background: var(--window);
+  border-radius: 36px;
+  border: 1px solid var(--bezel);
+  box-shadow: var(--bezel-shadow);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+.android-status {
+  height: 30px;
+  padding: 0 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text);
+  flex-shrink: 0;
+}
+.android-status .r {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+}
+.batt {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--done);
+  color: #07130C;
+  font-size: 9.5px;
+  font-weight: 700;
+}
+
+/* ============ NEW UNIFIED LIVE HEADER ============ */
+.live-top {
+  padding: 4px 14px 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.proj-switcher {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px 0 8px;
+  border-radius: 10px;
+  background: var(--raised);
+  border: 1px solid var(--line-subtle);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.proj-av {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.av-violet { background: rgba(185, 156, 255, 0.16); color: #B99CFF; }
+.av-blue { background: rgba(122, 167, 255, 0.16); color: #7AA7FF; }
+.av-green { background: rgba(111, 211, 160, 0.16); color: #6FD3A0; }
+.proj-info { min-width: 0; flex: 1; }
+.proj-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.15;
+}
+.proj-sub {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  line-height: 1.2;
+}
+.dot-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--done);
+  flex-shrink: 0;
+}
+.active-count {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+  background: var(--hover);
+  padding: 2px 6px;
+  border-radius: 6px;
+  flex-shrink: 0;
+}
+.ico-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--raised);
+  border: 1px solid var(--line-subtle);
+  color: var(--text-2);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 15px;
+}
+.ico-btn:hover { color: var(--text); border-color: var(--line); }
+
+/* ============ SUB-BAR: AGENT + STATUS + READER/RAW TOGGLE ============ */
+.pane-bar {
+  height: 38px;
+  padding: 0 14px;
+  background: var(--sheet);
+  border-top: 1px solid var(--line-subtle);
+  border-bottom: 1px solid var(--line-subtle);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+.agent-tile {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  background: var(--raised);
+  border: 1px solid var(--line-subtle);
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+.agent-tile img { width: 15px; height: 15px; }
+.status-pill {
+  height: 21px;
+  padding: 0 7px;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.st-idle { background: var(--idle-tint); color: var(--text-2); }
+.st-run { background: var(--running-tint); color: var(--running); }
+.st-ask { background: var(--input-tint); color: var(--input); }
+.st-done { background: var(--done-tint); color: var(--done); }
+.st-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.st-ring {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  animation: spin 1s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.pane-meta-txt {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+.mode-toggle {
+  display: inline-flex;
+  background: var(--inset);
+  border: 1px solid var(--line-subtle);
+  border-radius: 7px;
+  padding: 2px;
+  flex-shrink: 0;
+}
+.mode-toggle button {
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 500;
+  padding: 3px 7px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.mode-toggle button.on {
+  background: var(--raised);
+  color: var(--text);
+}
+.expand-btn {
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.expand-btn:hover { background: var(--hover); color: var(--text); }
+
+/* ============ EDGE-TO-EDGE READER CANVAS ============ */
+.reader-canvas {
+  flex: 1;
+  background: var(--sheet);
+  overflow-y: auto;
+  padding: 14px 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+.reader-canvas::-webkit-scrollbar { width: 4px; }
+.reader-canvas::-webkit-scrollbar-thumb { background: var(--line); border-radius: 2px; }
+
+/* User Prompt Message */
+.user-turn {
+  align-self: flex-end;
+  max-width: 88%;
+  background: var(--user-bubble);
+  border: 1px solid var(--user-border);
+  border-radius: 13px 13px 4px 13px;
+  padding: 9px 12px;
+  font-size: 13px;
+  line-height: 1.48;
+  color: var(--text);
+}
+.user-turn-k {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--accent-text);
+  margin-bottom: 3px;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+/* Agent Turn Block */
+.agent-turn {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.turn-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-3);
+}
+.turn-head b { color: var(--text-2); font-weight: 600; font-size: 11.5px; }
+.turn-head .model-tag {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  background: var(--hover);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* Readable Reflowed Prose */
+.prose {
+  font-size: 13.5px;
+  line-height: 1.56;
+  color: var(--text-prose);
+  letter-spacing: -0.005em;
+}
+.prose strong { color: var(--text); font-weight: 600; }
+.prose-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.prose-list li {
+  position: relative;
+  padding-left: 14px;
+  font-size: 13.2px;
+  line-height: 1.54;
+  color: var(--text-prose);
+}
+.prose-list li::before {
+  content: "";
+  position: absolute;
+  left: 1px;
+  top: 8px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.inline-code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  background: var(--code-bg);
+  border: 1px solid var(--line-subtle);
+  color: var(--text);
+  padding: 1px 5px;
+  border-radius: 5px;
+  word-break: break-word;
+}
+.link-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent-text);
+  background: var(--accent-tint);
+  border: 1px solid var(--accent-border);
+  padding: 1px 7px;
+  border-radius: 5px;
+  text-decoration: none;
+  vertical-align: baseline;
+  margin-top: 2px;
+}
+.path-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--term-cyan);
+  background: rgba(108, 207, 224, 0.10);
+  border: 1px solid rgba(108, 207, 224, 0.18);
+  padding: 1px 6px;
+  border-radius: 5px;
+}
+.callout-tip {
+  background: var(--raised);
+  border: 1px solid var(--line-subtle);
+  border-radius: 9px;
+  padding: 9px 11px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.callout-tip strong { color: var(--text); font-weight: 600; }
+
+/* Collapsible Tool Activity Group */
+.tool-card {
+  background: var(--raised);
+  border: 1px solid var(--line-subtle);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.tool-head {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text-2);
+  font-family: var(--sans);
+  font-size: 12px;
+  text-align: left;
+}
+.tool-head:hover { background: var(--hover); }
+.tool-ico {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  display: grid;
+  place-items: center;
+  font-size: 10.5px;
+  flex-shrink: 0;
+}
+.ti-ok { background: var(--done-tint); color: var(--done); }
+.ti-run { background: var(--running-tint); color: var(--running); }
+.ti-ask { background: var(--input-tint); color: var(--input); }
+.tool-title {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-weight: 500;
+}
+.tool-stat {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.stat-add { color: var(--done); }
+.stat-del { color: var(--failed); }
+.tool-chev {
+  font-size: 11px;
+  color: var(--text-3);
+  transition: transform 0.15s ease;
+}
+.tool-card.open .tool-chev { transform: rotate(90deg); }
+.tool-body {
+  display: none;
+  border-top: 1px solid var(--line-subtle);
+  background: var(--inset);
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-2);
+  overflow-x: auto;
+}
+.tool-card.open .tool-body { display: block; }
+.cmd-line {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+.cmd-line .p { color: var(--done); user-select: none; }
+.cmd-out { color: var(--text-3); margin-top: 3px; white-space: pre; }
+
+/* Crisp Horizontal-Scroll Diff Card (NEVER double wraps!) */
+.diff-card {
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  overflow: hidden;
+}
+.diff-head {
+  padding: 7px 10px;
+  background: var(--raised);
+  border-bottom: 1px solid var(--line-subtle);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text);
+}
+.diff-head .counts { margin-left: auto; font-size: 10.5px; }
+.diff-body {
+  overflow-x: auto;
+  padding: 5px 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.55;
+}
+.diff-row {
+  display: flex;
+  padding: 0 10px;
+  white-space: pre;
+  min-width: max-content;
+}
+.diff-row .ln {
+  width: 28px;
+  color: var(--text-4);
+  user-select: none;
+  flex-shrink: 0;
+}
+.diff-row.add { background: var(--diff-add-bg); color: var(--diff-add-fg); }
+.diff-row.del { background: var(--diff-del-bg); color: var(--diff-del-fg); }
+.diff-row.ctx { color: var(--text-3); }
+
+/* Live Thinking / Working Strip */
+.working-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 9px;
+  background: var(--running-tint);
+  border: 1px solid rgba(106, 165, 255, 0.22);
+  font-size: 12px;
+  color: var(--text);
+}
+.working-strip span { color: var(--text-2); font-size: 11.5px; margin-left: auto; font-family: var(--mono); }
+
+/* Approval Notice Card inside Reader */
+.ask-box {
+  background: var(--input-tint);
+  border: 1px solid rgba(242, 177, 75, 0.28);
+  border-radius: 10px;
+  padding: 11px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.ask-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.ask-cmd {
+  background: var(--inset);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.ask-actions {
+  display: flex;
+  gap: 7px;
+}
+.btn {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-family: var(--sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+.btn-f { flex: 1; }
+.btn-pri { background: var(--accent); color: var(--on-accent); }
+.btn-sec { background: var(--raised); color: var(--text); border-color: var(--line); }
+.btn-dan { background: var(--failed-tint); color: var(--failed); border-color: rgba(240, 106, 100, 0.24); }
+
+/* ============ RAW TERMINAL CANVAS (NO DOUBLE WRAP!) ============ */
+.raw-canvas {
+  flex: 1;
+  background: var(--inset);
+  overflow: auto;
+  padding: 10px 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--term-fg);
+  position: relative;
+}
+.raw-canvas pre {
+  font-family: var(--mono);
+  white-space: pre;
+  min-width: max-content;
+}
+.raw-hint {
+  position: sticky;
+  bottom: 4px;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  background: rgba(16, 16, 19, 0.88);
+  border: 1px solid var(--line-subtle);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+[data-theme="light"] .raw-hint { background: rgba(255,255,255,0.92); }
+.c-dim { color: var(--term-dim); }
+.c-blue { color: var(--running); }
+.c-green { color: var(--done); }
+.c-yel { color: var(--term-yellow); }
+.c-cyan { color: var(--term-cyan); }
+.c-red { color: var(--failed); }
+
+/* ============ OLD SCREENSHOT RECREATION (BEFORE) ============ */
+.old-wrap {
+  padding: 6px 14px 10px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-height: 0;
+}
+.old-h1 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.old-h1 h2 { font-size: 21px; font-weight: 600; letter-spacing: -0.02em; }
+.old-pill {
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 13px;
+  background: var(--raised);
+  border: 1px solid var(--line-subtle);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.old-ctx {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.old-box {
+  flex: 1;
+  min-height: 0;
+  background: var(--sheet);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.old-box-h {
+  height: 36px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--line-subtle);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+}
+.old-term {
+  flex: 1;
+  overflow: hidden;
+  padding: 8px 11px;
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.46;
+  color: var(--term-fg);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+.old-waste {
+  margin-top: 8px;
+  border: 1px dashed rgba(240, 106, 100, 0.45);
+  background: rgba(240, 106, 100, 0.06);
+  border-radius: 6px;
+  padding: 6px 8px;
+  position: relative;
+}
+.old-waste-tag {
+  position: absolute;
+  right: 6px;
+  top: -8px;
+  font-family: var(--sans);
+  font-size: 9.5px;
+  font-weight: 600;
+  background: var(--failed);
+  color: #fff;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+/* ============ COMPOSER + COLLAPSIBLE QUICK KEYS ============ */
+.dock {
+  background: var(--window);
+  border-top: 1px solid var(--line-subtle);
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.keys-tray {
+  display: flex;
+  gap: 5px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.keys-tray::-webkit-scrollbar { display: none; }
+.keys-tray.hidden { display: none; }
+.kchip {
+  height: 27px;
+  padding: 0 9px;
+  border-radius: 6px;
+  background: var(--raised);
+  border: 1px solid var(--line-subtle);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.kchip.warn {
+  background: var(--failed-tint);
+  border-color: rgba(240, 106, 100, 0.24);
+  color: var(--failed);
+  font-weight: 500;
+}
+.composer {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.kbd-toggle {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--raised);
+  border: 1px solid var(--line-subtle);
+  color: var(--text-2);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 600;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.kbd-toggle.on {
+  background: var(--accent-tint);
+  border-color: var(--accent-border);
+  color: var(--accent-text);
+}
+.comp-input {
+  flex: 1;
+  height: 36px;
+  padding: 0 11px;
+  border-radius: 9px;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  outline: none;
+}
+.comp-input::placeholder { color: var(--text-3); }
+.comp-input:focus { border-color: var(--accent); }
+.send-btn {
+  height: 36px;
+  padding: 0 13px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.send-btn.pri {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--on-accent);
+}
+
+/* Bottom Nav */
+.bnav {
+  height: 58px;
+  background: var(--sheet);
+  border-top: 1px solid var(--line-subtle);
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  align-items: center;
+  flex-shrink: 0;
+  padding: 0 6px;
+}
+.bnav-i {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  font-size: 10.5px;
+  font-weight: 500;
+  color: var(--text-3);
+}
+.bnav-i.on { color: var(--text); }
+.bnav-i svg { width: 19px; height: 19px; fill: currentColor; }
+
+/* Model Footer Pill inside Reader */
+.meta-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-3);
+  padding-top: 4px;
+  border-top: 1px dashed var(--line-subtle);
+}
+.hidden-col { display: none !important; }
+</style>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true"><defs>
+  <symbol id="i-term" viewBox="0 0 256 256"><path d="M128 128q0 2-1 4t-2 2l-40 32q-1 1-2 2t-3 0q-3 0-6-2t-2-6q0-2 1-4t2-2l32-26-32-26q-1-1-2-2t-1-4q0-3 2-6t6-2q2 0 3 0t2 2l40 32q1 1 2 2t1 4Zm48 24h-40q-3 0-6 2t-2 6q0 3 2 6t6 2h40q3 0 6-2t2-6q0-3-2-6t-6-2Zm56-96v144q0 7-5 11t-11 5H40q-7 0-11-5t-5-11V56q0-7 5-11t11-5h176q7 0 11 5t5 11Zm-16 144V56H40v144Z"/></symbol>
+  <symbol id="i-tray" viewBox="0 0 256 256"><path d="M208 32H48q-7 0-11 5t-5 11v160q0 7 5 11t11 5h160q7 0 11-5t5-11V48q0-7-5-11t-11-5Zm0 16v104h-29q-3 0-6 1t-5 4l-19 19h-42l-19-19q-2-3-5-4t-6-1H48V48Zm0 160H48v-40h29l19 19q2 3 5 4t6 1h42q3 0 6-1t5-4l19-19h29Z"/></symbol>
+  <symbol id="i-squares" viewBox="0 0 256 256"><path d="M104 40H56q-7 0-11 5t-5 11v48q0 7 5 11t11 5h48q7 0 11-5t5-11V56q0-7-5-11t-11-5Zm0 64H56V56h48Zm96-64h-48q-7 0-11 5t-5 11v48q0 7 5 11t11 5h48q7 0 11-5t5-11V56q0-7-5-11t-11-5Zm0 64h-48V56h48Zm-96 32H56q-7 0-11 5t-5 11v48q0 7 5 11t11 5h48q7 0 11-5t5-11v-48q0-7-5-11t-11-5Zm0 64H56v-48h48Zm96-64h-48q-7 0-11 5t-5 11v48q0 7 5 11t11 5h48q7 0 11-5t5-11v-48q0-7-5-11t-11-5Zm0 64h-48v-48h48Z"/></symbol>
+  <symbol id="i-user" viewBox="0 0 256 256"><path d="M128 24a104 104 0 1 0 0 208 104 104 0 0 0 0-208Zm0 16a88 88 0 0 1 68 144 76 76 0 0 0-38-25 48 48 0 1 0-60 0 76 76 0 0 0-38 25A88 88 0 0 1 128 40Zm0 40a32 32 0 1 1 0 64 32 32 0 0 1 0-64Zm0 136a88 88 0 0 1-56-20 60 60 0 0 1 112 0 88 88 0 0 1-56 20Z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 256 256"><path d="M128 80a48 48 0 1 0 48 48 48 48 0 0 0-48-48Zm0 80a32 32 0 1 1 32-32 32 32 0 0 1-32 32Zm88-29v-6l21-16a8 8 0 0 0 2-10l-20-35a8 8 0 0 0-10-3l-25 10-5-3-4-26a8 8 0 0 0-8-7h-40a8 8 0 0 0-8 7l-4 26-5 3-25-10a8 8 0 0 0-10 3L37 99a8 8 0 0 0 2 10l21 16v6l-21 16a8 8 0 0 0-2 10l20 35a8 8 0 0 0 10 3l25-10 5 3 4 26a8 8 0 0 0 8 7h40a8 8 0 0 0 8-7l4-26 5-3 25 10a8 8 0 0 0 10-3l20-35a8 8 0 0 0-2-10Z"/></symbol>
+  <symbol id="i-expand" viewBox="0 0 256 256"><path d="M216 48v48a8 8 0 0 1-16 0V67l-42 43a8 8 0 0 1-12-12l43-42h-29a8 8 0 0 1 0-16h48a8 8 0 0 1 8 8ZM98 146l-42 43v-29a8 8 0 0 0-16 0v48a8 8 0 0 0 8 8h48a8 8 0 0 0 0-16H67l43-42a8 8 0 0 0-12-12Z"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 256 256"><path d="M224 128a8 8 0 0 1-8 8h-80v80a8 8 0 0 1-16 0v-80H40a8 8 0 0 1 0-16h80V40a8 8 0 0 1 16 0v80h80a8 8 0 0 1 8 8Z"/></symbol>
+  <symbol id="i-claude" viewBox="0 0 24 24"><path fill="#D97757" d="M12 2.2 13.7 8.4 18.9 4.5 15.6 10.1 21.8 11.4 15.7 13.3 19.6 18.4 13.9 15.3 12.6 21.7 10.8 15.5 5.4 19.3 8.7 13.7 2.4 12.4 8.5 10.6 4.7 5.4 10.4 8.6z"/></symbol>
+  <symbol id="i-codex" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2.5a5.3 5.3 0 0 0-4.7 2.8A5.2 5.2 0 0 0 3.7 13a5.2 5.2 0 0 0 3.6 7.7 5.3 5.3 0 0 0 9.4 0 5.2 5.2 0 0 0 3.6-7.7 5.2 5.2 0 0 0-3.6-7.7A5.3 5.3 0 0 0 12 2.5Zm0 2.2c1.2 0 2.2.7 2.7 1.7l-2.7 1.6-2.7-1.6c.5-1 1.5-1.7 2.7-1.7Zm-4.9 3.6 2.7 1.6v3.1l-2.7-1.6a3 3 0 0 1 0-3.1Zm9.8 0a3 3 0 0 1 0 3.1l-2.7 1.6V9.9l2.7-1.6ZM12 10.8l1.6.9v1.8l-1.6.9-1.6-.9v-1.8l1.6-.9Zm-4.9 4.4 2.7 1.6v1.6a3 3 0 0 1-2.7-3.2Zm9.8 0a3 3 0 0 1-2.7 3.2v-1.6l2.7-1.6Z"/></symbol>
+</defs></svg>
+
+<header class="studio-bar">
+  <div class="studio-brand">
+    <img src="assets/icon.svg" alt="TernaryCode">
+    <span>TernaryCode Mobile</span>
+    <span class="studio-tag">Terminal Reader Redesign</span>
+  </div>
+
+  <div class="studio-seg" role="tablist">
+    <button id="view-all" class="on" type="button">All 4 Views</button>
+    <button id="view-compare" type="button">Before vs After</button>
+  </div>
+
+  <span class="studio-spacer"></span>
+
+  <a class="studio-btn" href="index.html">← All 14 Screens</a>
+  <button id="toggle-theme" class="studio-btn" type="button">Theme: <b id="theme-lbl">Dark</b></button>
+</header>
+
+<section class="hero">
+  <h1>Live Terminal Redesign — Slate Reader + Raw PTY</h1>
+  <p>
+    Tampilan terminal desktop yang lebar (90–110 kolom) pusing dibaca di HP karena <b>double-wrap</b> (terpotong 2× di tengah kata), <b>35% layar habis oleh chrome TUI</b> (<code>──── &gt; ? for shortcuts</code>), dan semua teks tampak datar. Desain baru ini mengubah output agent menjadi <b>Slate Reader</b> yang bersih &amp; mudah dipindai, sambil tetap menyediakan tombol 1-tap <b>Raw</b> untuk terminal PTY asli tanpa double-wrap.
+  </p>
+  <div class="pillars">
+    <div class="pillar">
+      <div class="pillar-k">01 · Smart Reflow</div>
+      <div class="pillar-t">Hapus Double-Wrap &amp; TUI Chrome</div>
+      <div class="pillar-d">Gabungkan ulang baris yang terpotong desktop, buang garis <code>────</code> &amp; prompt kosong <code>&gt;</code>, angkat info model ke tag rapi.</div>
+    </div>
+    <div class="pillar">
+      <div class="pillar-k">02 · Typography Hierarchy</div>
+      <div class="pillar-t">Prose Inter 13.5px + Code Pills</div>
+      <div class="pillar-d">Penjelasan agent pakai Inter yang nyaman dibaca; perintah, path file, &amp; URL jadi chip mono ringkas yang tidak patah.</div>
+    </div>
+    <div class="pillar">
+      <div class="pillar-k">03 · Collapsible Tools &amp; Diffs</div>
+      <div class="pillar-t">Tool Call Ringkas, Diff Scroll Horizontal</div>
+      <div class="pillar-d"><code>Ran 3 shell commands</code> dikelompokkan jadi kartu yang bisa di-tap; diff hijau/merah bisa digeser horizontal tanpa pecah.</div>
+    </div>
+    <div class="pillar">
+      <div class="pillar-k">04 · +65% Lebih Lega</div>
+      <div class="pillar-t">Header Ringkas + Quick Keys [⌘]</div>
+      <div class="pillar-d">Satukan header Live + project jadi 1 baris, dan sembunyikan tombol <code>Enter/Esc/Tab/↑/↓</code> di tombol <code>⌘</code> saat tidak dibutuhkan.</div>
+    </div>
+  </div>
+</section>
+
+<main class="board" id="board">
+
+  <!-- ==================== 01. BEFORE (SCREENSHOT SEKARANG) ==================== -->
+  <div class="phone-col" data-kind="compare">
+    <div class="phone-meta">
+      <div><span class="num">00</span> <span class="label">Before (Sekarang)</span></div>
+      <span class="badge badge-old">Double-wrap &amp; sempit</span>
+    </div>
+    <div class="phone">
+      <div class="android-status">
+        <span>12:38</span>
+        <span class="r"><span>9,71 KB/d</span><span class="batt">67</span></span>
+      </div>
+      <div class="old-wrap">
+        <div class="old-h1">
+          <h2>Live</h2>
+          <div style="display:flex;gap:6px;align-items:center">
+            <span class="old-pill"><span class="dot-live"></span>Mac · 192.168.1.50 ▾</span>
+            <span class="ico-btn" style="width:30px;height:30px"><svg width="15" height="15" fill="currentColor"><use href="#i-gear"/></svg></span>
+          </div>
+        </div>
+        <div class="old-ctx">
+          <div class="proj-switcher" style="height:34px">
+            <div class="proj-av av-violet" style="width:19px;height:19px;font-size:10px">T</div>
+            <div class="proj-name" style="flex:1;font-size:13px">ternarycode</div>
+            <span style="font-family:var(--mono);font-size:10.5px;color:var(--text-3)">9 active ›</span>
+          </div>
+          <div class="ico-btn" style="width:34px;height:34px"><svg width="15" height="15" fill="currentColor"><use href="#i-plus"/></svg></div>
+        </div>
+        <div class="old-box">
+          <div class="old-box-h">
+            <div class="agent-tile"><img src="assets/antigravity.png" alt="AGY"></div>
+            <span class="status-pill st-idle"><span class="st-dot"></span>Idle</span>
+            <span class="pane-meta-txt" style="text-align:right">agy1 · main</span>
+            <span class="expand-btn"><svg width="13" height="13" fill="currentColor"><use href="#i-expand"/></svg></span>
+          </div>
+          <div class="old-term">https://github.
+      com/ilhamnadhif/ternarycode/releases/tag/
+v0.3.16 (12 aset: macOS
+      universal .dmg/.zip, Windows, Linux).
+  • Mobile: flutter analyze --fatal-infos (0
+issue) + 16/16 tes unit,
+  widget 14-layar, dan live HTTP+SSE E2E
+  (~/Developments/FLUTTER/ternarycode-mobile/
+test/live_companion_server_tes
+  t.dart) lulus semua.
+      • Published: TernaryCode Mobile v0.2.2
+https://github.
+      com/ilhamnadhif/ternarycode-mobile/
+releases/tag/v0.2.2 (5 aset APK
+      signed + SHA256SUMS.txt).
+
+  Anda bisa langsung update keduanya lewat in-
+app updater masing-masing
+  (Settings → Updates di desktop, dan Settings →
+TernaryCode Mobile → Check
+  / Update di Android).<div class="old-waste"><span class="old-waste-tag">35% ruang terbuang (TUI chrome)</span>──────────────────────────────────────
+──────────────────────────
+&gt;
+──────────────────────────────────────
+──────────────────────────
+? for shortcuts
+auto · Gemini 4 Neon · xhigh</div></div>
+        </div>
+        <div class="keys-tray">
+          <span class="kchip">↵ Enter</span>
+          <span class="kchip">Esc</span>
+          <span class="kchip warn">^C Stop</span>
+          <span class="kchip">Tab</span>
+          <span class="kchip">↑</span>
+          <span class="kchip">↓</span>
+        </div>
+        <div class="composer">
+          <input class="comp-input" readonly value="" placeholder="Send an instruction to Antigravity CLI…">
+          <button class="send-btn" type="button">Send</button>
+        </div>
+      </div>
+      <nav class="bnav">
+        <div class="bnav-i on"><svg><use href="#i-term"/></svg><span>Live</span></div>
+        <div class="bnav-i"><svg><use href="#i-tray"/></svg><span>Inbox</span></div>
+        <div class="bnav-i"><svg><use href="#i-squares"/></svg><span>Projects</span></div>
+        <div class="bnav-i"><svg><use href="#i-user"/></svg><span>Accounts</span></div>
+      </nav>
+    </div>
+    <p class="phone-caption">Baris terpotong 2× (<code>test/live_companion_server_tes / t.dart</code>), chrome <code>────</code> &amp; <code>&gt;</code> makan 1/3 layar, dan 3 lapis header menumpuk di atas.</p>
+  </div>
+
+  <!-- ==================== 02. AFTER — INTERACTIVE READER / RAW ==================== -->
+  <div class="phone-col" data-kind="compare">
+    <div class="phone-meta">
+      <div><span class="num">01</span> <span class="label">After — Slate Reader (Interaktif)</span></div>
+      <span class="badge badge-new">Default untuk AI Agent</span>
+    </div>
+    <div class="phone" id="interactive-phone">
+      <div class="android-status">
+        <span>12:38</span>
+        <span class="r"><span>9,71 KB/d</span><span class="batt">67</span></span>
+      </div>
+
+      <!-- Unified 1-Row Header -->
+      <div class="live-top">
+        <div class="proj-switcher" title="Tap to open Projects → Active">
+          <div class="proj-av av-violet">T</div>
+          <div class="proj-info">
+            <div class="proj-name">ternarycode</div>
+            <div class="proj-sub"><span class="dot-live"></span>Mac · 192.168.1.50</div>
+          </div>
+          <span class="active-count">9 active ›</span>
+        </div>
+        <button class="ico-btn" type="button" title="New agent"><svg width="16" height="16" fill="currentColor"><use href="#i-plus"/></svg></button>
+        <button class="ico-btn" type="button" title="Settings"><svg width="16" height="16" fill="currentColor"><use href="#i-gear"/></svg></button>
+      </div>
+
+      <!-- Pane Bar with Reader / Raw Toggle -->
+      <div class="pane-bar">
+        <div class="agent-tile"><img src="assets/antigravity.png" alt="AGY"></div>
+        <span class="status-pill st-done"><span class="st-dot"></span>Ready</span>
+        <span class="pane-meta-txt">agy1 · main</span>
+        <div class="mode-toggle" id="p1-mode">
+          <button class="on" data-m="reader" type="button">Reader</button>
+          <button data-m="raw" type="button">Raw</button>
+        </div>
+        <button class="expand-btn" type="button" title="Fullscreen"><svg width="14" height="14" fill="currentColor"><use href="#i-expand"/></svg></button>
+      </div>
+
+      <!-- Reader Mode Canvas (Exact same content as screenshot, reflowed cleanly!) -->
+      <div class="reader-canvas" id="p1-reader">
+        <div class="user-turn">
+          <div class="user-turn-k">You</div>
+          kerjakan yang menurutmu paling cocok dan paling bagus aja, tolong perbaiki, jangan menambah bug, kalau semua udah oke, langsung deploy
+        </div>
+
+        <div class="agent-turn">
+          <div class="turn-head">
+            <b>Antigravity</b>
+            <span>· just now</span>
+            <span class="model-tag">Gemini 4 Neon · xhigh</span>
+          </div>
+
+          <div class="tool-card" data-collapsible>
+            <button class="tool-head" type="button">
+              <span class="tool-ico ti-ok">✓</span>
+              <span class="tool-title">Verified &amp; published 2 releases</span>
+              <span class="tool-stat"><span class="stat-add">+360</span> <span class="stat-del">-21</span></span>
+              <span class="tool-chev">›</span>
+            </button>
+            <div class="tool-body">
+              <div class="cmd-line"><span class="p">$</span>cargo test --workspace &amp;&amp; cargo clippy -- -D warnings</div>
+              <div class="cmd-out">test result: ok. 120 passed; 0 failed</div>
+              <div class="cmd-line" style="margin-top:6px"><span class="p">$</span>flutter analyze --fatal-infos &amp;&amp; flutter test</div>
+              <div class="cmd-out">No issues found! · +16: All tests passed!</div>
+            </div>
+          </div>
+
+          <div class="prose">
+            Semuanya sudah selesai, teruji penuh, dan resmi live untuk <strong>Desktop</strong> maupun <strong>Mobile</strong>:
+          </div>
+
+          <ul class="prose-list">
+            <li>
+              <strong>Desktop</strong> — lulus <span class="inline-code">cargo test</span> (120 test) + <span class="inline-code">clippy</span> 0 warning. Published 12 aset (macOS universal, Windows, Linux).<br>
+              <a class="link-pill" href="#v0.3.16" onclick="return false">↗ TernaryCode Desktop v0.3.16</a>
+            </li>
+            <li>
+              <strong>Mobile</strong> — <span class="inline-code">flutter analyze --fatal-infos</span> (0 issue) + 16/16 tes unit, widget 14-layar, dan live HTTP+SSE E2E di <span class="path-pill">live_companion_server_test.dart</span> lulus semua.<br>
+              <a class="link-pill" href="#v0.2.2" onclick="return false">↗ TernaryCode Mobile v0.2.2 · 5 APK</a>
+            </li>
+          </ul>
+
+          <div class="callout-tip">
+            <strong>Cara update:</strong> langsung dari in-app updater — <strong>Settings → Updates</strong> di desktop, dan <strong>Settings → TernaryCode Mobile → Check / Update</strong> di Android.
+          </div>
+
+          <div class="meta-foot">
+            <span>Ready for next instruction</span>
+            <span>auto · agy1</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Raw Mode Canvas (Hidden until toggled to Raw) -->
+      <div class="raw-canvas" id="p1-raw" style="display:none">
+<pre><span class="c-green">●</span> Semuanya sudah selesai, teruji penuh, dan resmi live:
+
+  • <span class="c-blue">Desktop</span>: cargo test --workspace (120 passed) + clippy 0 warnings
+    Published: https://github.com/ilhamnadhif/ternarycode/releases/tag/v0.3.16
+    (12 aset: macOS universal .dmg/.zip, Windows, Linux).
+
+  • <span class="c-blue">Mobile</span>: flutter analyze --fatal-infos (0 issue) + 16/16 tests
+    (~/Developments/FLUTTER/ternarycode-mobile/test/live_companion_server_test.dart)
+    Published: https://github.com/ilhamnadhif/ternarycode-mobile/releases/tag/v0.2.2
+    (5 aset APK signed + SHA256SUMS.txt).
+
+  Anda bisa langsung update keduanya lewat in-app updater masing-masing
+  (Settings → Updates di desktop, dan Settings → TernaryCode Mobile → Check/Update).
+
+<span class="c-dim">──────────────────────────────────────────────────────────────────────────────────</span>
+<span class="c-green">&gt;</span> 
+<span class="c-dim">──────────────────────────────────────────────────────────────────────────────────</span>
+<span class="c-dim">? for shortcuts · auto · Gemini 4 Neon · xhigh</span></pre>
+        <div class="raw-hint">↔ Geser horizontal · 0 double-wrap</div>
+      </div>
+
+      <!-- Clean Dock with Toggleable Quick Keys -->
+      <div class="dock">
+        <div class="keys-tray hidden" id="p1-keys">
+          <button class="kchip" type="button">↵ Enter</button>
+          <button class="kchip" type="button">Esc</button>
+          <button class="kchip warn" type="button">^C Stop</button>
+          <button class="kchip" type="button">Tab</button>
+          <button class="kchip" type="button">↑</button>
+          <button class="kchip" type="button">↓</button>
+        </div>
+        <div class="composer">
+          <button class="kbd-toggle" id="p1-kbd" type="button" title="Toggle terminal keys">⌘</button>
+          <input class="comp-input" id="p1-input" placeholder="Reply to Antigravity…">
+          <button class="send-btn pri" id="p1-send" type="button">Send</button>
+        </div>
+      </div>
+
+      <nav class="bnav">
+        <div class="bnav-i on"><svg><use href="#i-term"/></svg><span>Live</span></div>
+        <div class="bnav-i"><svg><use href="#i-tray"/></svg><span>Inbox</span></div>
+        <div class="bnav-i"><svg><use href="#i-squares"/></svg><span>Projects</span></div>
+        <div class="bnav-i"><svg><use href="#i-user"/></svg><span>Accounts</span></div>
+      </nav>
+    </div>
+    <p class="phone-caption"><b>Coba klik langsung:</b> tap <b>Reader / Raw</b> di bar atas, tap kartu <b>Verified &amp; published</b> untuk expand command, tap <b>⌘</b> untuk buka quick keys, atau kirim pesan!</p>
+  </div>
+
+  <!-- ==================== 03. RUNNING + COLLAPSIBLE TOOLS + DIFF ==================== -->
+  <div class="phone-col" data-kind="extra">
+    <div class="phone-meta">
+      <div><span class="num">02</span> <span class="label">Running · Tools &amp; Inline Diff</span></div>
+      <span class="badge badge-alt">Codex / Claude</span>
+    </div>
+    <div class="phone">
+      <div class="android-status">
+        <span>12:39</span>
+        <span class="r"><span>159 KB/d</span><span class="batt">67</span></span>
+      </div>
+
+      <div class="live-top">
+        <div class="proj-switcher">
+          <div class="proj-av av-blue">E</div>
+          <div class="proj-info">
+            <div class="proj-name">etisalat-ae-gemezz</div>
+            <div class="proj-sub"><span class="dot-live"></span>Mac · 192.168.1.50</div>
+          </div>
+          <span class="active-count">3 active ›</span>
+        </div>
+        <button class="ico-btn" type="button"><svg width="16" height="16" fill="currentColor"><use href="#i-plus"/></svg></button>
+        <button class="ico-btn" type="button"><svg width="16" height="16" fill="currentColor"><use href="#i-gear"/></svg></button>
+      </div>
+
+      <div class="pane-bar">
+        <div class="agent-tile"><svg width="15" height="15"><use href="#i-codex"/></svg></div>
+        <span class="status-pill st-run"><span class="st-ring"></span>Running</span>
+        <span class="pane-meta-txt">chatgpt1 · master</span>
+        <div class="mode-toggle">
+          <button class="on" type="button">Reader</button>
+          <button type="button">Raw</button>
+        </div>
+        <button class="expand-btn" type="button"><svg width="14" height="14" fill="currentColor"><use href="#i-expand"/></svg></button>
+      </div>
+
+      <div class="reader-canvas">
+        <div class="agent-turn">
+          <div class="turn-head">
+            <b>Codex</b>
+            <span>· 11:04</span>
+            <span class="model-tag">GPT-6-Luna · low</span>
+          </div>
+
+          <div class="prose">
+            Backup untuk ketiga service selesai (tabel <span class="inline-code">*_bak_utc_20261125</span> dan file dump). Ketiga DB sudah ter-rebuild ke WIB dan total <strong>newsub</strong>, <strong>renewal</strong>, serta <strong>revenue</strong> cocok persis dengan data mentah.
+          </div>
+
+          <div class="tool-card" data-collapsible>
+            <button class="tool-head" type="button">
+              <span class="tool-ico ti-ok">✓</span>
+              <span class="tool-title">Ran 3 shell commands</span>
+              <span class="tool-stat">14.2s</span>
+              <span class="tool-chev">›</span>
+            </button>
+            <div class="tool-body">
+              <div class="cmd-line"><span class="p">$</span>mysqldump gemezz_db &gt; /tmp/bak_20261125.sql</div>
+              <div class="cmd-line"><span class="p">$</span>php artisan report:rebuild-wib --verify</div>
+              <div class="cmd-out">OK · 148,920 rows matched (0 diff)</div>
+            </div>
+          </div>
+
+          <div class="diff-card">
+            <div class="diff-head">
+              <span>config.yaml</span>
+              <span class="counts"><span class="stat-add">+2</span> <span class="stat-del">-2</span></span>
+            </div>
+            <div class="diff-body">
+              <div class="diff-row ctx"><span class="ln">18</span>  schedule: "0 0 * * *"</div>
+              <div class="diff-row del"><span class="ln">19</span>- timezone: "UTC"</div>
+              <div class="diff-row add"><span class="ln">19</span>+ timezone: "Asia/Jakarta"</div>
+              <div class="diff-row del"><span class="ln">20</span>- cutoff_hour: 0</div>
+              <div class="diff-row add"><span class="ln">20</span>+ cutoff_hour: 7</div>
+            </div>
+          </div>
+
+          <div class="working-strip">
+            <span class="st-ring" style="color:var(--running)"></span>
+            <div>Applying cron patch across 3 repos…</div>
+            <span>00:18</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Running state shows contextual ^C Stop neatly -->
+      <div class="dock">
+        <div class="composer">
+          <button class="kchip warn" type="button" style="height:36px;padding:0 11px;border-radius:9px">^C Stop</button>
+          <input class="comp-input" placeholder="Queue follow-up instruction…">
+          <button class="send-btn" type="button">Send</button>
+        </div>
+      </div>
+
+      <nav class="bnav">
+        <div class="bnav-i on"><svg><use href="#i-term"/></svg><span>Live</span></div>
+        <div class="bnav-i"><svg><use href="#i-tray"/></svg><span>Inbox</span></div>
+        <div class="bnav-i"><svg><use href="#i-squares"/></svg><span>Projects</span></div>
+        <div class="bnav-i"><svg><use href="#i-user"/></svg><span>Accounts</span></div>
+      </nav>
+    </div>
+    <p class="phone-caption">Saat agent sedang <b>Running</b>: log shell yang repetitif terlipat rapi, diff tetap rata &amp; bisa di-scroll horizontal, dan tombol <b>^C Stop</b> langsung siap di sebelah input.</p>
+  </div>
+
+  <!-- ==================== 04. NEEDS INPUT + APPROVAL ==================== -->
+  <div class="phone-col" data-kind="extra">
+    <div class="phone-meta">
+      <div><span class="num">03</span> <span class="label">Needs Input · 1-Tap Approve</span></div>
+      <span class="badge badge-alt">Claude Code</span>
+    </div>
+    <div class="phone">
+      <div class="android-status">
+        <span>12:40</span>
+        <span class="r"><span>12 KB/d</span><span class="batt">67</span></span>
+      </div>
+
+      <div class="live-top">
+        <div class="proj-switcher">
+          <div class="proj-av av-green">S</div>
+          <div class="proj-info">
+            <div class="proj-name">storefront</div>
+            <div class="proj-sub"><span class="dot-live"></span>Mac · 192.168.1.50</div>
+          </div>
+          <span class="active-count">3 active ›</span>
+        </div>
+        <button class="ico-btn" type="button"><svg width="16" height="16" fill="currentColor"><use href="#i-plus"/></svg></button>
+        <button class="ico-btn" type="button"><svg width="16" height="16" fill="currentColor"><use href="#i-gear"/></svg></button>
+      </div>
+
+      <div class="pane-bar" style="border-bottom-color:rgba(242,177,75,0.28)">
+        <div class="agent-tile"><svg width="15" height="15"><use href="#i-claude"/></svg></div>
+        <span class="status-pill st-ask"><span class="st-dot"></span>Needs input</span>
+        <span class="pane-meta-txt">claude1 · feat/auth</span>
+        <div class="mode-toggle">
+          <button class="on" type="button">Reader</button>
+          <button type="button">Raw</button>
+        </div>
+        <button class="expand-btn" type="button"><svg width="14" height="14" fill="currentColor"><use href="#i-expand"/></svg></button>
+      </div>
+
+      <div class="reader-canvas">
+        <div class="agent-turn">
+          <div class="turn-head">
+            <b>Claude Code</b>
+            <span>· 12:39</span>
+            <span class="model-tag">Opus 4.6</span>
+          </div>
+
+          <div class="prose">
+            Saya sudah menemukan penyebab token refresh gagal di <span class="path-pill">session.ts</span>: timeout fallback menggunakan nilai <span class="inline-code">0</span> saat clock skew negatif. Saya perbaiki guard-nya, sekarang perlu jalankan suite test auth.
+          </div>
+
+          <div class="tool-card open" data-collapsible>
+            <button class="tool-head" type="button">
+              <span class="tool-ico ti-ok">✓</span>
+              <span class="tool-title">Edited src/auth/session.ts</span>
+              <span class="tool-stat"><span class="stat-add">+4</span> <span class="stat-del">-1</span></span>
+              <span class="tool-chev">›</span>
+            </button>
+            <div class="tool-body" style="padding:0">
+              <div class="diff-body">
+                <div class="diff-row del"><span class="ln">84</span>- const ttl = Math.max(0, exp - now);</div>
+                <div class="diff-row add"><span class="ln">84</span>+ const ttl = Math.max(30, exp - now);</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="ask-box">
+            <div class="ask-head">
+              <span class="tool-ico ti-ask">!</span>
+              <span>Claude Code wants to run Bash</span>
+            </div>
+            <div class="ask-cmd">$ npm test -- auth --runInBand</div>
+            <div class="ask-actions">
+              <button class="btn btn-pri btn-f" type="button">Approve</button>
+              <button class="btn btn-sec btn-f" type="button">Reject</button>
+              <button class="btn btn-dan" type="button">Stop</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dock">
+        <div class="composer">
+          <button class="kbd-toggle" type="button">⌘</button>
+          <input class="comp-input" placeholder="Or reply with custom instruction…">
+          <button class="send-btn" type="button">Send</button>
+        </div>
+      </div>
+
+      <nav class="bnav">
+        <div class="bnav-i on"><svg><use href="#i-term"/></svg><span>Live</span></div>
+        <div class="bnav-i"><svg><use href="#i-tray"/></svg><span>Inbox</span></div>
+        <div class="bnav-i"><svg><use href="#i-squares"/></svg><span>Projects</span></div>
+        <div class="bnav-i"><svg><use href="#i-user"/></svg><span>Accounts</span></div>
+      </nav>
+    </div>
+    <p class="phone-caption">Konteks perubahan kode + command yang diminta + tombol <b>Approve / Reject / Stop</b> langsung tersusun seperti percakapan modern—bukan potongan teks terminal yang terpotong.</p>
+  </div>
+
+</main>
+
+<script>
+// Theme toggle
+const themeBtn = document.getElementById('toggle-theme');
+const themeLbl = document.getElementById('theme-lbl');
+themeBtn.addEventListener('click', () => {
+  const html = document.documentElement;
+  const next = html.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+  html.setAttribute('data-theme', next);
+  themeLbl.textContent = next === 'light' ? 'Light' : 'Dark';
+});
+
+// View filter: All 4 vs Before/After compare
+const vAll = document.getElementById('view-all');
+const vCmp = document.getElementById('view-compare');
+function setView(mode) {
+  vAll.classList.toggle('on', mode === 'all');
+  vCmp.classList.toggle('on', mode === 'compare');
+  document.querySelectorAll('.phone-col[data-kind="extra"]').forEach(el => {
+    el.classList.toggle('hidden-col', mode === 'compare');
+  });
+}
+vAll.addEventListener('click', () => setView('all'));
+vCmp.addEventListener('click', () => setView('compare'));
+
+// Interactive Phone 01: Reader <-> Raw toggle
+const p1Mode = document.getElementById('p1-mode');
+const p1Reader = document.getElementById('p1-reader');
+const p1Raw = document.getElementById('p1-raw');
+const p1Keys = document.getElementById('p1-keys');
+const p1Kbd = document.getElementById('p1-kbd');
+
+p1Mode.querySelectorAll('button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const m = btn.dataset.m;
+    p1Mode.querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
+    p1Reader.style.display = m === 'reader' ? 'flex' : 'none';
+    p1Raw.style.display = m === 'raw' ? 'block' : 'none';
+    // Raw mode automatically reveals quick terminal keys
+    if (m === 'raw') {
+      p1Keys.classList.remove('hidden');
+      p1Kbd.classList.add('on');
+    } else {
+      p1Keys.classList.add('hidden');
+      p1Kbd.classList.remove('on');
+    }
+  });
+});
+
+// Collapsible quick keys tray
+p1Kbd.addEventListener('click', () => {
+  const open = p1Keys.classList.toggle('hidden');
+  p1Kbd.classList.toggle('on', !open);
+});
+
+// Collapsible tool cards across all phones
+document.querySelectorAll('[data-collapsible] .tool-head').forEach(head => {
+  head.addEventListener('click', () => {
+    head.closest('[data-collapsible]').classList.toggle('open');
+  });
+});
+
+// Live composer preview on Phone 01
+const p1Input = document.getElementById('p1-input');
+const p1Send = document.getElementById('p1-send');
+function sendDemoMsg() {
+  const text = p1Input.value.trim();
+  if (!text) return;
+  p1Input.value = '';
+  const el = document.createElement('div');
+  el.className = 'user-turn';
+  el.innerHTML = `<div class="user-turn-k">You</div>`;
+  const body = document.createTextNode(text);
+  el.appendChild(body);
+  p1Reader.appendChild(el);
+  p1Reader.scrollTop = p1Reader.scrollHeight;
+}
+p1Send.addEventListener('click', sendDemoMsg);
+p1Input.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendDemoMsg();
+});
+</script>
+</body>
+</html>
