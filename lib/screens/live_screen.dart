@@ -3,23 +3,22 @@ import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../models/companion_models.dart';
-import '../services/terminal_reader_parser.dart';
+import '../services/interactive_prompt_parser.dart';
 import '../state/app_controller.dart';
 import '../theme/agent_icons.dart';
 import '../theme/slate_theme.dart';
 import '../theme/slate_tokens.dart';
 import '../widgets/host_switcher_sheet.dart';
-import '../widgets/slate_reader_view.dart';
 import '../widgets/slate_widgets.dart';
 import '../widgets/spawn_agent_sheet.dart';
 import '../widgets/terminal_view.dart';
 
-/// Screens 05, 06, 07 · Live Terminal & Agent Reader.
+/// Screens 05, 06, 07 · Live Raw Terminal.
 ///
-/// Unified slim 1-row header + edge-to-edge `SlateReaderView` (default for AI
-/// agents, reflowing desktop output cleanly with zero double-wrap) + 1-tap
-/// `Raw` PTY toggle (horizontal scroll, no double-wrap) + collapsible `⌘` quick
-/// keys dock.
+/// Unified slim 1-row header + edge-to-edge polished `TerminalOutputView`
+/// (rich ANSI & semantic syntax highlighting, text selection, 1-tap wrap/copy,
+/// floating Latest pill) + interactive TUI prompt 1-tap choice dock +
+/// collapsible `⌘` quick keys + multiline composer.
 class LiveScreen extends StatefulWidget {
   const LiveScreen({
     super.key,
@@ -44,30 +43,12 @@ class LiveScreen extends StatefulWidget {
 
 class _LiveScreenState extends State<LiveScreen> {
   final TextEditingController _promptCtrl = TextEditingController();
-  final Map<int, bool> _rawModeByPane = {};
   bool _showQuickKeys = false;
 
   @override
   void dispose() {
     _promptCtrl.dispose();
     super.dispose();
-  }
-
-  bool _isRawMode(CompanionPane pane) {
-    final override = _rawModeByPane[pane.id];
-    if (override != null) return override;
-    return pane.agentKey == 'shell';
-  }
-
-  void _setRawMode(CompanionPane pane, bool raw) {
-    setState(() {
-      _rawModeByPane[pane.id] = raw;
-      if (raw) {
-        _showQuickKeys = true;
-      } else {
-        _showQuickKeys = false;
-      }
-    });
   }
 
   void _sendPrompt(CompanionPane pane) {
@@ -184,10 +165,9 @@ class _LiveScreenState extends State<LiveScreen> {
       );
     }
 
-    final isRaw = _isRawMode(pane);
-    final doc = TerminalReaderParser.parse(pane.output);
-    final interactivePrompt = doc.interactivePrompt;
-    final keysVisible = isRaw || _showQuickKeys;
+    final interactivePrompt = InteractivePromptParser.parse(pane.output);
+    final keysVisible = _showQuickKeys;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final dotColor = hostOnline
         ? c.done
         : (hostReconnecting ? c.input : c.failed);
@@ -423,7 +403,7 @@ class _LiveScreenState extends State<LiveScreen> {
             ),
           ),
 
-        // ── Edge-to-Edge Pane Control Bar with Reader | Raw Toggle ──
+        // ── Edge-to-Edge Raw Terminal Control Bar (Wrap, Copy, Fullscreen) ──
         Container(
           height: 38,
           padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -451,10 +431,25 @@ class _LiveScreenState extends State<LiveScreen> {
                   style: SlateTypography.data(c, size: 10.5, color: c.text3),
                 ),
               ),
-              const SizedBox(width: 5),
-              _ReaderRawToggle(
-                isRaw: isRaw,
-                onChanged: (raw) => _setRawMode(pane, raw),
+              const SizedBox(width: 4),
+              SlateIconButton(
+                icon: PhosphorIconsRegular.arrowUDownLeft,
+                tooltip: 'Toggle line wrap',
+                small: true,
+                active: ctrl.settings.termWrap,
+                onPressed: () => ctrl.updateSettings(
+                  ctrl.settings.copyWith(termWrap: !ctrl.settings.termWrap),
+                ),
+              ),
+              const SizedBox(width: 4),
+              SlateIconButton(
+                icon: PhosphorIconsRegular.copy,
+                tooltip: 'Copy terminal output',
+                small: true,
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: pane.output));
+                  ctrl.showToast('Copied output');
+                },
               ),
               const SizedBox(width: 4),
               SlateIconButton(
@@ -467,31 +462,19 @@ class _LiveScreenState extends State<LiveScreen> {
           ),
         ),
 
-        // ── Edge-to-Edge Reading Canvas (Slate Reader OR Raw PTY) ──
+        // ── Edge-to-Edge Polished Raw Terminal Canvas ──
         Expanded(
           child: ColoredBox(
-            color: isRaw ? c.inset : c.sheet,
-            child: isRaw
-                ? TerminalOutputView(
-                    paneId: pane.id,
-                    output: pane.output,
-                    fontSize: ctrl.settings.termFontSize,
-                    wrap: false,
-                  )
-                : SlateReaderView(
-                    pane: pane,
-                    document: doc,
-                    onToast: ctrl.showToast,
-                    onSelectOption: (prompt, opt) =>
-                        ctrl.selectInteractiveOption(pane.id, prompt, opt),
-                    onCancelPrompt: () => ctrl.sendTerminalInput(
-                      pane.id,
-                      '\x1B',
-                      enter: false,
-                      toastLabel: 'Sent Esc',
-                    ),
-                    fontScale: (ctrl.settings.termFontSize / 11.5).clamp(0.85, 1.35),
-                  ),
+            color: isDark ? c.inset : c.sheet,
+            child: TerminalOutputView(
+              paneId: pane.id,
+              agentLabel: pane.label,
+              isRunning: pane.status == 'running' && pane.rateLimit == null,
+              runningMessage: pane.message,
+              output: pane.output,
+              fontSize: ctrl.settings.termFontSize,
+              wrap: ctrl.settings.termWrap,
+            ),
           ),
         ),
 
@@ -715,7 +698,7 @@ class _LiveScreenState extends State<LiveScreen> {
     AppController ctrl,
     CompanionSnapshot snap,
     CompanionPane pane, {
-    ReaderInteractivePrompt? interactivePrompt,
+    InteractivePrompt? interactivePrompt,
     bool keyboardOpen = false,
   }) {
     if (pane.rateLimit != null) {
@@ -868,82 +851,5 @@ class _LiveScreenState extends State<LiveScreen> {
     }
 
     return const [];
-  }
-}
-
-class _ReaderRawToggle extends StatelessWidget {
-  const _ReaderRawToggle({
-    required this.isRaw,
-    required this.onChanged,
-  });
-
-  final bool isRaw;
-  final ValueChanged<bool> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.slate;
-    return Container(
-      padding: const EdgeInsets.all(2),
-      decoration: BoxDecoration(
-        color: c.inset,
-        borderRadius: BorderRadius.circular(7),
-        border: Border.all(color: c.lineSubtle),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _SegBtn(
-            label: 'Reader',
-            active: !isRaw,
-            onTap: () => onChanged(false),
-          ),
-          _SegBtn(
-            label: 'Raw',
-            active: isRaw,
-            onTap: () => onChanged(true),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _SegBtn extends StatelessWidget {
-  const _SegBtn({
-    required this.label,
-    required this.active,
-    required this.onTap,
-  });
-
-  final String label;
-  final bool active;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final c = context.slate;
-    return GestureDetector(
-      onTap: onTap,
-      behavior: HitTestBehavior.opaque,
-      child: Container(
-        height: 22,
-        padding: const EdgeInsets.symmetric(horizontal: 6),
-        decoration: BoxDecoration(
-          color: active ? c.raised : Colors.transparent,
-          borderRadius: BorderRadius.circular(5),
-        ),
-        alignment: Alignment.center,
-        child: Text(
-          label,
-          style: TextStyle(
-            fontFamily: 'Inter',
-            fontSize: 10,
-            fontWeight: FontWeight.w500,
-            color: active ? c.text : c.text3,
-          ),
-        ),
-      ),
-    );
   }
 }

@@ -8,9 +8,9 @@ import '../models/demo_fixtures.dart';
 import '../models/host_models.dart';
 import '../services/apk_updater.dart';
 import '../services/companion_api.dart';
+import '../services/interactive_prompt_parser.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
-import '../services/terminal_reader_parser.dart';
 
 enum ConnectionPhase { disconnected, connecting, connected, reconnecting, revoked }
 
@@ -52,7 +52,7 @@ class AppController extends ChangeNotifier {
   ApkReleaseInfo? _availableUpdate;
   ApkReleaseInfo? get availableUpdate => _availableUpdate;
 
-  String _appVersion = '0.3.3';
+  String _appVersion = '0.3.4';
   String get appVersion => _appVersion;
 
   bool _bootstrapped = false;
@@ -872,8 +872,8 @@ class AppController extends ChangeNotifier {
   /// sending the exact arrow delta + Enter or confirmation key sequence.
   Future<void> selectInteractiveOption(
     int paneId,
-    ReaderInteractivePrompt prompt,
-    ReaderPromptOption option,
+    InteractivePrompt prompt,
+    InteractivePromptOption option,
   ) async {
     switch (prompt.kind) {
       case PromptInputKind.tuiMenu:

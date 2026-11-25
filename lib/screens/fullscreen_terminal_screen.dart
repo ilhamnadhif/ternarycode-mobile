@@ -2,17 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
-import '../services/terminal_reader_parser.dart';
+import '../services/interactive_prompt_parser.dart';
 import '../state/app_controller.dart';
 import '../theme/agent_icons.dart';
 import '../theme/slate_theme.dart';
 import '../theme/slate_tokens.dart';
-import '../widgets/slate_reader_view.dart';
 import '../widgets/slate_widgets.dart';
 import '../widgets/terminal_view.dart';
 
-/// Screen 08 · Fullscreen Reader / Raw Terminal with A-/A+ text zoom,
-/// Reader/Raw switch, wrap toggle (Raw), scroll-to-latest pill, Copy, and quick keys.
+/// Screen 08 · Fullscreen Raw Terminal with A-/A+ text zoom, line-wrap toggle,
+/// interactive prompt 1-tap choice dock, scroll-to-latest pill, Copy, and quick keys.
 class FullscreenTerminalScreen extends StatefulWidget {
   const FullscreenTerminalScreen({
     super.key,
@@ -32,7 +31,6 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
   final ScrollController _scrollCtrl = ScrollController();
   final TextEditingController _promptCtrl = TextEditingController();
   bool _showLatestPill = false;
-  bool? _rawOverride;
 
   @override
   void initState() {
@@ -69,6 +67,7 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
   @override
   Widget build(BuildContext context) {
     final c = context.slate;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return ListenableBuilder(
       listenable: widget.controller,
       builder: (context, _) {
@@ -78,10 +77,9 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                 .firstOrNull ??
             ctrl.selectedPane;
         final settings = ctrl.settings;
-        final isRaw = _rawOverride ?? (pane?.agentKey == 'shell');
-        final doc =
-            pane != null ? TerminalReaderParser.parse(pane.output) : null;
-        final interactivePrompt = doc?.interactivePrompt;
+        final interactivePrompt = pane != null
+            ? InteractivePromptParser.parse(pane.output)
+            : null;
         final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 100;
 
         return Scaffold(
@@ -89,10 +87,11 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
           body: SafeArea(
             child: Column(
               children: [
-                // Compact top bar
+                // Compact top bar with A- / A+ zoom & line wrap toggle
                 Container(
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
                   decoration: BoxDecoration(
+                    color: c.sheet,
                     border: Border(bottom: BorderSide(color: c.lineSubtle)),
                   ),
                   child: Row(
@@ -133,17 +132,6 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                       ),
                       SlateIconButton(
                         icon: null,
-                        label: isRaw ? 'Raw' : 'Rdr',
-                        tooltip: isRaw
-                            ? 'Switch to Reader view'
-                            : 'Switch to Raw terminal',
-                        small: true,
-                        active: !isRaw,
-                        onPressed: () => setState(() => _rawOverride = !isRaw),
-                      ),
-                      const SizedBox(width: 5),
-                      SlateIconButton(
-                        icon: null,
                         label: 'A-',
                         tooltip: 'Smaller text',
                         small: true,
@@ -167,54 +155,40 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                           ),
                         ),
                       ),
-                      if (isRaw) ...[
-                        const SizedBox(width: 5),
-                        SlateIconButton(
-                          icon: PhosphorIconsRegular.arrowUDownLeft,
-                          tooltip: 'Toggle line wrap',
-                          small: true,
-                          active: settings.termWrap,
-                          onPressed: () => ctrl.updateSettings(
-                            settings.copyWith(termWrap: !settings.termWrap),
-                          ),
+                      const SizedBox(width: 5),
+                      SlateIconButton(
+                        icon: PhosphorIconsRegular.arrowUDownLeft,
+                        tooltip: 'Toggle line wrap',
+                        small: true,
+                        active: settings.termWrap,
+                        onPressed: () => ctrl.updateSettings(
+                          settings.copyWith(termWrap: !settings.termWrap),
                         ),
-                      ],
+                      ),
                     ],
                   ),
                 ),
 
-                // Edge-to-edge Reader or Raw terminal canvas
+                // Edge-to-edge polished raw terminal canvas
                 Expanded(
                   child: Container(
-                    color: isRaw ? c.inset : c.sheet,
+                    color: isDark ? c.inset : c.sheet,
                     child: Stack(
                       children: [
                         Positioned.fill(
-                          child: isRaw || pane == null
-                              ? TerminalOutputView(
-                                  paneId: pane?.id,
-                                  controller: _scrollCtrl,
-                                  output: pane?.output ?? '',
-                                  fontSize: settings.termFontSize,
-                                  wrap: settings.termWrap,
-                                )
-                              : SlateReaderView(
-                                  pane: pane,
-                                  document: doc,
-                                  controller: _scrollCtrl,
-                                  onToast: ctrl.showToast,
-                                  onSelectOption: (prompt, opt) =>
-                                      ctrl.selectInteractiveOption(
-                                          pane.id, prompt, opt),
-                                  onCancelPrompt: () => ctrl.sendTerminalInput(
-                                    pane.id,
-                                    '\x1B',
-                                    enter: false,
-                                    toastLabel: 'Sent Esc',
-                                  ),
-                                  fontScale: (settings.termFontSize / 11.5)
-                                      .clamp(0.85, 1.35),
-                                ),
+                          child: TerminalOutputView(
+                            paneId: pane?.id,
+                            agentLabel: pane?.label,
+                            isRunning: pane != null &&
+                                pane.status == 'running' &&
+                                pane.rateLimit == null,
+                            runningMessage: pane?.message,
+                            controller: _scrollCtrl,
+                            output: pane?.output ?? '',
+                            fontSize: settings.termFontSize,
+                            wrap: settings.termWrap,
+                            showLatestPill: false,
+                          ),
                         ),
                         if (_showLatestPill)
                           Positioned(
@@ -263,7 +237,7 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                   ),
                 ),
 
-                // Quick keys + composer bar
+                // Interactive prompt dock + quick keys + multiline composer bar
                 if (pane != null)
                   Container(
                     padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),

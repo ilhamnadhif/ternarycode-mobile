@@ -3,11 +3,11 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ternarycode_mobile/app.dart';
 import 'package:ternarycode_mobile/services/companion_api.dart';
 import 'package:ternarycode_mobile/services/notification_service.dart';
+import 'package:ternarycode_mobile/services/interactive_prompt_parser.dart';
 import 'package:ternarycode_mobile/services/storage_service.dart';
-import 'package:ternarycode_mobile/services/terminal_reader_parser.dart';
 import 'package:ternarycode_mobile/state/app_controller.dart';
 import 'package:ternarycode_mobile/theme/slate_theme.dart';
-import 'package:ternarycode_mobile/widgets/slate_reader_view.dart';
+import 'package:ternarycode_mobile/widgets/terminal_view.dart';
 
 void main() {
   Future<AppController> buildController() async {
@@ -71,29 +71,31 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 200));
 
-    // Screen 05 · Live Terminal (Needs input) — Reader/Raw toggle & collapsible terminal keys
+    // Screen 05 · Live Raw Terminal (Needs input) — wrap/copy controls & collapsible terminal keys
     expect(find.text('Live'), findsWidgets);
     expect(find.text('storefront'), findsWidgets);
     expect(find.text('4 active'), findsOneWidget);
-    expect(find.text('Reader'), findsOneWidget);
-    expect(find.text('Raw'), findsOneWidget);
+    expect(find.byTooltip('Toggle line wrap'), findsOneWidget);
+    expect(find.byTooltip('Copy terminal output'), findsOneWidget);
     expect(find.text('Approve'), findsOneWidget);
     expect(find.text('Reject'), findsOneWidget);
     expect(find.text('Stop'), findsOneWidget);
 
-    // Toggle to Raw mode (reveals quick terminal keys) and back to Reader
-    await tester.tap(find.text('Raw'));
+    // Toggle line wrap directly from Live control bar
+    final initialWrap = ctrl.settings.termWrap;
+    await tester.tap(find.byTooltip('Toggle line wrap'));
     await tester.pump();
-    expect(find.text('Esc'), findsOneWidget);
-    await tester.tap(find.text('Reader'));
+    expect(ctrl.settings.termWrap, !initialWrap);
+    await tester.tap(find.byTooltip('Toggle line wrap'));
     await tester.pump();
-    expect(find.text('Esc'), findsNothing);
+
     // Toggle collapsible Terminal keys via keyboard button
     await tester.tap(find.byTooltip('Terminal keys'));
     await tester.pump();
     expect(find.text('Esc'), findsOneWidget);
     await tester.tap(find.byTooltip('Terminal keys'));
     await tester.pump();
+    expect(find.text('Esc'), findsNothing);
 
     // Tap active context bar -> jumps straight to Projects tab with ACTIVE list at top
     await tester.tap(find.text('4 active'));
@@ -233,7 +235,7 @@ void main() {
     tester.view.devicePixelRatio = 3.0;
     addTearDown(tester.view.reset);
 
-    final doc = TerminalReaderParser.parse('''
+    final prompt = InteractivePromptParser.parse('''
 ╭────────────────────────────────────────────────────────╮
 │ Do you trust the files in this folder?                 │
 │                                                        │
@@ -245,9 +247,9 @@ void main() {
 │ Enter to confirm · Esc to cancel                       │
 ╰────────────────────────────────────────────────────────╯
 ''');
-    expect(doc.interactivePrompt, isNotNull);
+    expect(prompt, isNotNull);
 
-    ReaderPromptOption? tapped;
+    InteractivePromptOption? tapped;
     var cancelled = false;
 
     for (final mode in [ThemeMode.dark, ThemeMode.light]) {
@@ -261,7 +263,7 @@ void main() {
               child: Padding(
                 padding: const EdgeInsets.all(14),
                 child: InteractivePromptDock(
-                  prompt: doc.interactivePrompt!,
+                  prompt: prompt!,
                   onSelect: (opt) => tapped = opt,
                   onCancel: () => cancelled = true,
                 ),
