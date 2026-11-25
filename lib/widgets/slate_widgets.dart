@@ -780,25 +780,41 @@ class SlateQuotaMeter extends StatelessWidget {
   const SlateQuotaMeter({
     super.key,
     required this.label,
-    required this.usedPct,
+    this.usedPct,
     required this.tokensLabel,
     this.resetLabel,
   });
 
   final String label;
-  final double usedPct;
+  final double? usedPct;
   final String tokensLabel;
   final String? resetLabel;
 
   @override
   Widget build(BuildContext context) {
     final c = context.slate;
-    final pct = usedPct.clamp(0.0, 100.0);
-    final barColor = pct >= 90
-        ? c.limited
-        : pct >= 70
-            ? c.input
-            : c.accent;
+    final pct = usedPct?.clamp(0.0, 100.0);
+    final barColor = pct == null
+        ? c.accent
+        : pct >= 90
+            ? c.limited
+            : pct >= 70
+                ? c.input
+                : c.accent;
+
+    if (pct == null) {
+      // Local-telemetry-only window (e.g. Antigravity CLI): clean label + tokens without a fake 0% bar.
+      return Row(
+        children: [
+          Text(label, style: SlateTypography.data(c)),
+          const Spacer(),
+          Text(
+            tokensLabel,
+            style: SlateTypography.data(c, color: c.text2),
+          ),
+        ],
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

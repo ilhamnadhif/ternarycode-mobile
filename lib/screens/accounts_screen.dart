@@ -237,7 +237,7 @@ class _AccountQuotaCard extends StatelessWidget {
             const SizedBox(height: 11),
             SlateQuotaMeter(
               label: w5.label,
-              usedPct: w5.usedPct ?? 0,
+              usedPct: w5.usedPct,
               tokensLabel: formatTokens(w5.tokens),
               resetLabel: formatResetCountdown(w5.resetsAtUnix),
             ),
@@ -246,7 +246,7 @@ class _AccountQuotaCard extends StatelessWidget {
             const SizedBox(height: 10),
             SlateQuotaMeter(
               label: wk.label,
-              usedPct: wk.usedPct ?? 0,
+              usedPct: wk.usedPct,
               tokensLabel: formatTokens(wk.tokens),
               resetLabel: formatResetCountdown(wk.resetsAtUnix),
             ),
@@ -255,14 +255,6 @@ class _AccountQuotaCard extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               'Usage: ${formatTokens(profile.tokensIn + profile.tokensOut)} tokens',
-              style: SlateTypography.data(c),
-            ),
-          ],
-          if (profile.activeSession != null &&
-              profile.activeSession!.isNotEmpty) ...[
-            const SizedBox(height: 9),
-            Text(
-              'Active in ${profile.activeSession}',
               style: SlateTypography.data(c),
             ),
           ],

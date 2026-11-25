@@ -52,7 +52,7 @@ class AppController extends ChangeNotifier {
   ApkReleaseInfo? _availableUpdate;
   ApkReleaseInfo? get availableUpdate => _availableUpdate;
 
-  String _appVersion = '0.3.2';
+  String _appVersion = '0.3.3';
   String get appVersion => _appVersion;
 
   bool _bootstrapped = false;
