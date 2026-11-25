@@ -45,10 +45,13 @@ void main() {
     expect(find.text('Scan QR code'), findsOneWidget);
     expect(find.text('Enter address & code'), findsOneWidget);
 
-    // Screen 02 · QR Scanner (camera disabled in test env)
+    // Screen 02 · QR Scanner (camera disabled in test env) — caption strictly below reticle
     await tester.tap(find.text('Scan QR code'));
     await tester.pumpAndSettle();
     expect(find.text('Enter code manually'), findsOneWidget);
+    final captionTop = tester.getTopLeft(find.textContaining('Point at the QR code')).dy;
+    final reticleBottom = 844 * 0.39 + 114;
+    expect(captionTop, greaterThanOrEqualTo(reticleBottom + 16));
 
     // Screen 03 · Manual Pairing & draft preservation on validation error
     await tester.tap(find.text('Enter code manually'));

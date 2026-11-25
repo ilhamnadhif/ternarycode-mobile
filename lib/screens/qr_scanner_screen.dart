@@ -96,97 +96,78 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     final c = context.slate;
     return Scaffold(
       backgroundColor: const Color(0xFF070709),
-      body: Stack(
-        fit: StackFit.expand,
-        children: [
-          if (_scanner != null)
-            MobileScanner(
-              controller: _scanner!,
-              onDetect: _onBarcode,
-              errorBuilder: (_, err, _) => Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(28),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(PhosphorIconsRegular.cameraSlash,
-                          color: Color(0xFFA0A0A9), size: 32),
-                      const SizedBox(height: 10),
-                      const Text(
-                        'Camera unavailable or permission denied.',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(color: Color(0xFFEDEDF0), fontSize: 13),
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          const boxSize = 228.0;
+          final reticleCenterY = constraints.maxHeight * 0.39;
+          final captionTop = reticleCenterY + (boxSize / 2) + 18;
+
+          return Stack(
+            fit: StackFit.expand,
+            children: [
+              if (_scanner != null)
+                MobileScanner(
+                  controller: _scanner!,
+                  onDetect: _onBarcode,
+                  errorBuilder: (_, err, _) => Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(28),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(PhosphorIconsRegular.cameraSlash,
+                              color: Color(0xFFA0A0A9), size: 32),
+                          const SizedBox(height: 10),
+                          const Text(
+                            'Camera unavailable or permission denied.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                                color: Color(0xFFEDEDF0), fontSize: 13),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            err.errorDetails?.message ??
+                                'Use manual pairing to connect by address and code.',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                                color: Color(0xFFA0A0A9), fontSize: 12),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        err.errorDetails?.message ??
-                            'Use manual pairing to connect by address and code.',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            color: Color(0xFFA0A0A9), fontSize: 12),
-                      ),
-                    ],
+                    ),
                   ),
-                ),
-              ),
-            )
-          else
-            const DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: RadialGradient(
-                  center: Alignment(0, -0.12),
-                  radius: 0.9,
-                  colors: [
-                    Color(0xFF14141A),
-                    Color(0xFF070709),
-                  ],
-                ),
-              ),
-            ),
-
-          // Translucent reticle mask
-          IgnorePointer(
-            child: CustomPaint(
-              painter: _ReticleScrimPainter(
-                accent: const Color(0xFF8BB2FF),
-              ),
-            ),
-          ),
-
-          SafeArea(
-            child: Column(
-              children: [
-                // Top controls (Back + Torch)
-                Padding(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      _CamPillButton(
-                        icon: PhosphorIconsRegular.arrowLeft,
-                        label: 'Back',
-                        onTap: () => Navigator.of(context).pop(),
-                      ),
-                      _CamPillButton(
-                        icon: PhosphorIconsRegular.lightning,
-                        label: _torchOn ? 'Torch on' : 'Torch',
-                        active: _torchOn,
-                        onTap: () async {
-                          await _scanner?.toggleTorch();
-                          if (mounted) {
-                            setState(() => _torchOn = !_torchOn);
-                          }
-                        },
-                      ),
-                    ],
+                )
+              else
+                const DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: RadialGradient(
+                      center: Alignment(0, -0.18),
+                      radius: 0.9,
+                      colors: [
+                        Color(0xFF14141A),
+                        Color(0xFF070709),
+                      ],
+                    ),
                   ),
                 ),
 
-                const Spacer(),
-                const SizedBox(height: 244),
-                const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 32),
+              // Translucent reticle mask locked to `reticleCenterY`
+              IgnorePointer(
+                child: CustomPaint(
+                  painter: _ReticleScrimPainter(
+                    accent: const Color(0xFF8BB2FF),
+                    centerYFraction: 0.39,
+                    boxSize: boxSize,
+                  ),
+                ),
+              ),
+
+              // Caption mathematically anchored 18px below the reticle box
+              Positioned(
+                top: captionTop,
+                left: 28,
+                right: 28,
+                child: const IgnorePointer(
                   child: Text(
                     'Point at the QR code in Settings → Phone on your Mac, Linux, or Windows PC.',
                     textAlign: TextAlign.center,
@@ -198,133 +179,175 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                     ),
                   ),
                 ),
-                const Spacer(),
+              ),
 
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (_error != null) ...[
-                        Container(
-                          width: double.infinity,
-                          padding: const EdgeInsets.all(10),
-                          margin: const EdgeInsets.only(bottom: 10),
-                          decoration: BoxDecoration(
-                            color: c.failedTint,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(
-                                color: c.failed.withValues(alpha: 0.35)),
+              SafeArea(
+                child: Column(
+                  children: [
+                    // Top controls (Back + Torch)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          _CamPillButton(
+                            icon: PhosphorIconsRegular.arrowLeft,
+                            label: 'Back',
+                            onTap: () => Navigator.of(context).pop(),
                           ),
-                          child: Text(
-                            _error!,
-                            style: TextStyle(color: c.failed, fontSize: 12),
+                          _CamPillButton(
+                            icon: PhosphorIconsRegular.lightning,
+                            label: _torchOn ? 'Torch on' : 'Torch',
+                            active: _torchOn,
+                            onTap: () async {
+                              await _scanner?.toggleTorch();
+                              if (mounted) {
+                                setState(() => _torchOn = !_torchOn);
+                              }
+                            },
                           ),
-                        ),
-                      ],
-                      if (_detected != null) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 10),
-                          decoration: BoxDecoration(
-                            color: const Color(0xF01A1A1D),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                                color: const Color(0x598BB2FF)),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                width: 8,
-                                height: 8,
-                                decoration: BoxDecoration(
-                                  color: c.done,
-                                  shape: BoxShape.circle,
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Detected · ${_detected!.hostLabel ?? _detected!.baseUrl}',
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: const TextStyle(
-                                        fontFamily: 'Inter',
-                                        fontSize: 12.5,
-                                        fontWeight: FontWeight.w500,
-                                        color: Color(0xFFEDEDF0),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      'Code ${_detected!.code}',
-                                      style: SlateTypography.data(
-                                        SlateColors.dark,
-                                        color: const Color(0xFFA0A0A9),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 10),
-                              SlateButton(
-                                label: 'Pair',
-                                height: 34,
-                                busy: _pairing,
-                                onPressed: _confirmPair,
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                      ],
-                      SizedBox(
-                        width: double.infinity,
-                        child: Material(
-                          color: Colors.transparent,
-                          child: InkWell(
-                            onTap: widget.onManualFallback,
-                            borderRadius: BorderRadius.circular(10),
-                            child: Ink(
-                              height: 40,
+                        ],
+                      ),
+                    ),
+
+                    const Spacer(),
+
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (_error != null) ...[
+                            Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
+                              margin: const EdgeInsets.only(bottom: 10),
                               decoration: BoxDecoration(
-                                color: Colors.white.withValues(alpha: 0.10),
+                                color: const Color(0xEB261416),
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.14),
+                                    color: c.failed.withValues(alpha: 0.45)),
+                              ),
+                              child: Text(
+                                _error!,
+                                style: const TextStyle(
+                                  fontFamily: 'Inter',
+                                  color: Color(0xFFF6908B),
+                                  fontSize: 12,
+                                  height: 16 / 12,
                                 ),
                               ),
-                              child: const Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
+                            ),
+                          ],
+                          if (_detected != null) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xF01A1A1D),
+                                borderRadius: BorderRadius.circular(12),
+                                border:
+                                    Border.all(color: const Color(0x598BB2FF)),
+                              ),
+                              child: Row(
                                 children: [
-                                  Icon(PhosphorIconsRegular.keyboard,
-                                      size: 16, color: Color(0xFFEDEDF0)),
-                                  SizedBox(width: 7),
-                                  Text(
-                                    'Enter code manually',
-                                    style: TextStyle(
-                                      fontFamily: 'Inter',
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w500,
-                                      color: Color(0xFFEDEDF0),
+                                  Container(
+                                    width: 8,
+                                    height: 8,
+                                    decoration: BoxDecoration(
+                                      color: c.done,
+                                      shape: BoxShape.circle,
                                     ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Detected · ${_detected!.hostLabel ?? _detected!.baseUrl}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontFamily: 'Inter',
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w500,
+                                            color: Color(0xFFEDEDF0),
+                                          ),
+                                        ),
+                                        const SizedBox(height: 2),
+                                        Text(
+                                          'Code ${_detected!.code}',
+                                          style: SlateTypography.data(
+                                            SlateColors.dark,
+                                            color: const Color(0xFFA0A0A9),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 10),
+                                  SlateButton(
+                                    label: 'Pair',
+                                    height: 34,
+                                    busy: _pairing,
+                                    onPressed: _confirmPair,
                                   ),
                                 ],
                               ),
                             ),
+                            const SizedBox(height: 10),
+                          ],
+                          SizedBox(
+                            width: double.infinity,
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                onTap: widget.onManualFallback,
+                                borderRadius: BorderRadius.circular(10),
+                                child: Ink(
+                                  height: 40,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.10),
+                                    borderRadius: BorderRadius.circular(10),
+                                    border: Border.all(
+                                      color:
+                                          Colors.white.withValues(alpha: 0.14),
+                                    ),
+                                  ),
+                                  child: const Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(PhosphorIconsRegular.keyboard,
+                                          size: 16, color: Color(0xFFEDEDF0)),
+                                      SizedBox(width: 7),
+                                      Text(
+                                        'Enter code manually',
+                                        style: TextStyle(
+                                          fontFamily: 'Inter',
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w500,
+                                          color: Color(0xFFEDEDF0),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
-                        ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        ],
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -387,15 +410,20 @@ class _CamPillButton extends StatelessWidget {
 }
 
 class _ReticleScrimPainter extends CustomPainter {
-  const _ReticleScrimPainter({required this.accent});
+  const _ReticleScrimPainter({
+    required this.accent,
+    this.centerYFraction = 0.39,
+    this.boxSize = 228.0,
+  });
   final Color accent;
+  final double centerYFraction;
+  final double boxSize;
 
   @override
   void paint(Canvas canvas, Size size) {
-    const boxSize = 228.0;
     const radius = 18.0;
     final rect = Rect.fromCenter(
-      center: Offset(size.width / 2, size.height * 0.44),
+      center: Offset(size.width / 2, size.height * centerYFraction),
       width: boxSize,
       height: boxSize,
     );
