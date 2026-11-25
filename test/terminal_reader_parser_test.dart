@@ -48,8 +48,11 @@ auto · Gemini 4 Neon · xhigh
                 ReaderDiffBlock(:final lines) =>
                   lines.map((e) => e.text).join('\n'),
                 ReaderCodeBlock(:final lines) => lines.join('\n'),
+                ReaderInteractivePromptBlock(:final prompt) => prompt.title,
               })
           .join('\n');
+
+      expect(doc.interactivePrompt, isNull);
 
       expect(allText, isNot(contains('────')));
       expect(allText, isNot(contains('? for shortcuts')));
@@ -111,6 +114,118 @@ GPT-6-Luna low · ~/Developments/SaveBite-Web
 
       final paras = doc.blocks.whereType<ReaderParagraphBlock>().toList();
       expect(paras.last.text, 'Sudah diperbaiki ke Asia/Jakarta.');
+      expect(doc.interactivePrompt, isNull);
+    });
+
+    test('detects Claude Code boxed and unboxed workspace trust dialogs cleanly', () {
+      const boxed = '''
+╭──────────────────────────────────────────────────────────────╮
+│ Do you trust the files in this folder?                       │
+│                                                              │
+│ /Users/ilham/Developments/my-project                         │
+│                                                              │
+│ Claude Code may read, write, or execute files contained in   │
+│ this directory.                                              │
+│                                                              │
+│ ❯ 1. Yes, proceed                                            │
+│   2. No, exit                                                │
+│                                                              │
+│ Enter to confirm · Esc to cancel                             │
+╰──────────────────────────────────────────────────────────────╯
+''';
+
+      final doc = TerminalReaderParser.parse(boxed);
+      expect(doc.blocks.whereType<ReaderUserPromptBlock>(), isEmpty);
+      final prompt = doc.interactivePrompt;
+      expect(prompt, isNotNull);
+      expect(prompt!.kind, PromptInputKind.tuiMenu);
+      expect(prompt.title, 'Do you trust the files in this folder?');
+      expect(prompt.selectedIndex, 0);
+      expect(prompt.allowsEsc, isTrue);
+      expect(prompt.options.length, 2);
+      expect(prompt.options[0].label, '1. Yes, proceed');
+      expect(prompt.options[0].isSelected, isTrue);
+      expect(prompt.options[0].isDanger, isFalse);
+      expect(prompt.options[1].label, '2. No, exit');
+      expect(prompt.options[1].isSelected, isFalse);
+      expect(prompt.options[1].isDanger, isTrue);
+
+      const unboxedV2 = '''
+Accessing workspace:
+
+/Users/ilham/Developments/demo
+
+Quick safety check: Is this a project you created or one you trust?
+
+❯ 1. Yes, I trust this folder
+  2. No, exit
+
+Enter to confirm · Esc to cancel
+''';
+      final doc2 = TerminalReaderParser.parse(unboxedV2);
+      expect(doc2.interactivePrompt, isNotNull);
+      expect(doc2.interactivePrompt!.options.first.label, '1. Yes, I trust this folder');
+      expect(doc2.interactivePrompt!.options.last.label, '2. No, exit');
+    });
+
+    test('detects unnumbered Claude trust dialog with second option highlighted', () {
+      const sample = '''
+Do you trust the files in this folder?
+
+  Yes, I trust this folder
+❯ No, exit
+
+Enter to confirm · Esc to cancel
+''';
+      final doc = TerminalReaderParser.parse(sample);
+      final prompt = doc.interactivePrompt;
+      expect(prompt, isNotNull);
+      expect(prompt!.kind, PromptInputKind.tuiMenu);
+      expect(prompt.selectedIndex, 1);
+      expect(prompt.options.length, 2);
+      expect(prompt.options[0].label, 'Yes, I trust this folder');
+      expect(prompt.options[0].isSelected, isFalse);
+      expect(prompt.options[1].label, 'No, exit');
+      expect(prompt.options[1].isSelected, isTrue);
+    });
+
+    test('detects multi-option Claude/Codex permission menus with wrapped option text and [Y/n] prompts', () {
+      const claudePerm = '''
+Bash command
+  npm test
+
+Do you want to proceed?
+❯ 1. Yes
+  2. Yes, and don't ask again for Bash commands in
+     /Users/ilham/Developments/app
+  3. No, and tell Claude what to do differently (esc)
+''';
+      final doc = TerminalReaderParser.parse(claudePerm);
+      final prompt = doc.interactivePrompt;
+      expect(prompt, isNotNull);
+      expect(prompt!.title, 'Do you want to proceed?');
+      expect(prompt.options.length, 3);
+      expect(prompt.options[1].label, contains('/Users/ilham/Developments/app'));
+      expect(prompt.options[2].isDanger, isTrue);
+      expect(prompt.allowsEsc, isTrue);
+
+      const ynPrompt = 'Proceed with database migration? [y/N]';
+      final ynDoc = TerminalReaderParser.parse(ynPrompt);
+      expect(ynDoc.interactivePrompt, isNotNull);
+      expect(ynDoc.interactivePrompt!.kind, PromptInputKind.yesNo);
+      expect(ynDoc.interactivePrompt!.selectedIndex, 1);
+      expect(ynDoc.interactivePrompt!.options.map((o) => o.label), ['Yes', 'No']);
+    });
+
+    test('never falsely flags normal numbered lists or prose as interactive prompts', () {
+      const normalList = '''
+Done! Summary of updates:
+1. Updated API handler
+2. Added unit tests
+3. Deployed release
+''';
+      final doc = TerminalReaderParser.parse(normalList);
+      expect(doc.interactivePrompt, isNull);
     });
   });
 }

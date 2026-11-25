@@ -1,9 +1,55 @@
 /// Smart parser transforming desktop-wrapped PTY screen tails (Claude Code,
 /// Codex CLI, Antigravity CLI, OpenCode, Gemini CLI) into clean, reflowed
 /// structured blocks for mobile reading — eliminating double-wrap, stripping
-/// bottom TUI chrome (`────`, empty `>`, `? for shortcuts`), and extracting
-/// collapsible tool calls, horizontal-scroll diffs, and model metadata.
+/// bottom TUI chrome (`────`, empty `>`, `? for shortcuts`), detecting
+/// interactive TUI prompts (trust dialogs, permission menus, `[Y/n]` confirms),
+/// and extracting collapsible tool calls, horizontal-scroll diffs, and model metadata.
 library;
+
+enum PromptInputKind {
+  /// Arrow-navigated TUI selection menu (`❯ 1. Yes` / `  2. No` or `❯ Yes` / `  No`).
+  tuiMenu,
+
+  /// Classic `[Y/n]` / `(y/N)` confirmation prompt.
+  yesNo,
+
+  /// Single-action `Enter to confirm · Esc to cancel` prompt.
+  confirmCancel,
+}
+
+class ReaderPromptOption {
+  const ReaderPromptOption({
+    required this.index,
+    required this.label,
+    required this.isSelected,
+    this.shortcutKey,
+    this.isDanger = false,
+  });
+
+  final int index;
+  final String label;
+  final bool isSelected;
+  final String? shortcutKey;
+  final bool isDanger;
+}
+
+class ReaderInteractivePrompt {
+  const ReaderInteractivePrompt({
+    required this.kind,
+    required this.title,
+    required this.options,
+    required this.selectedIndex,
+    this.allowsEsc = false,
+    this.hint,
+  });
+
+  final PromptInputKind kind;
+  final String title;
+  final List<ReaderPromptOption> options;
+  final int selectedIndex;
+  final bool allowsEsc;
+  final String? hint;
+}
 
 sealed class ReaderBlock {
   const ReaderBlock();
@@ -86,14 +132,45 @@ class ReaderStatusBlock extends ReaderBlock {
   final String tone; // 'info' | 'warn' | 'error' | 'success'
 }
 
+class ReaderInteractivePromptBlock extends ReaderBlock {
+  const ReaderInteractivePromptBlock(this.prompt);
+  final ReaderInteractivePrompt prompt;
+}
+
 class ReaderDocument {
   const ReaderDocument({
     required this.blocks,
     this.modelTag,
+    this.interactivePrompt,
   });
 
   final List<ReaderBlock> blocks;
   final String? modelTag;
+  final ReaderInteractivePrompt? interactivePrompt;
+}
+
+class _ExtractedPrompt {
+  const _ExtractedPrompt({
+    required this.prompt,
+    required this.startIndex,
+  });
+
+  final ReaderInteractivePrompt prompt;
+  final int startIndex;
+}
+
+class _RawMenuItem {
+  _RawMenuItem({
+    required this.number,
+    required this.hasCursor,
+    required this.label,
+    required this.startLine,
+  });
+
+  final int? number;
+  final bool hasCursor;
+  String label;
+  final int startLine;
 }
 
 class TerminalReaderParser {
@@ -101,12 +178,18 @@ class TerminalReaderParser {
     r'\x1B(?:\][^\x07\x1B]*(?:\x07|\x1B\\)|\[[0-9;?]*[ -/]*[@-~]|\([A-Za-z0-9])',
   );
   static final RegExp _ruleLineRegex = RegExp(r'^[\s─━═\-_╭╮╰╯┌┐└┘┬┴┼│┃]+$');
+  static final RegExp _outerBoxLineRegex =
+      RegExp(r'^\s*[│┃]\s?(.*?)\s*[│┃]?\s*$');
   static final RegExp _emptyPromptRegex = RegExp(
     r'^[│┃\s]*[>›❯]\s*(?:(?:Ask|Send|Type|Message|Write|Enter|Follow-up|Reply)[^\n]{0,40}?)?[│┃\s]*$',
     caseSensitive: false,
   );
   static final RegExp _shortcutHintRegex = RegExp(
     r'(?:\?\s*for\s+shortcuts|esc\s+to\s+interrupt|ctrl\+c\s+to|shift\+tab|alt\+enter|tab\s+to\s+(?:autocomplete|complete)|bypass\s+permissions|accept\s+edits|enter\s+to\s+send)',
+    caseSensitive: false,
+  );
+  static final RegExp _menuFooterHintRegex = RegExp(
+    r'(?:enter\s+to\s+(?:confirm|select|continue|submit)|esc\s+to\s+(?:cancel|exit|dismiss)|arrow\s+keys|↑\s*/?\s*↓|to\s+navigate|press\s+enter\s+to\s+continue)',
     caseSensitive: false,
   );
   static final RegExp _modelFooterRegex = RegExp(
@@ -128,13 +211,27 @@ class TerminalReaderParser {
   );
   static final RegExp _toolDetailRegex = RegExp(r'^\s*[└├⎿]\s*(.*)$');
   static final RegExp _userPromptLineRegex = RegExp(r'^\s*[❯›>]\s+(\S.*)$');
+  static final RegExp _tuiNumberedOptionRegex = RegExp(
+    r'^\s*([❯›>▸→●◉*])?\s*(?:(\d)[.)]|\[(\d)\])\s+(.+)$',
+  );
+  static final RegExp _tuiCursorOptionRegex =
+      RegExp(r'^\s*([❯›▸→◉●○])\s+(\S.*)$');
+  static final RegExp _yesNoPromptRegex = RegExp(
+    r'(?:\[(y)/(n)\]|\[(n)/(y)\]|\((y)/(n)\)|\((n)/(y)\))\s*:?\s*$',
+    caseSensitive: false,
+  );
+  static final RegExp _choiceWordRegex = RegExp(
+    r'^(?:yes\b|no\b|allow\b|deny\b|approve\b|reject\b|trust\b|don.?t\s+trust|cancel\b|exit\b|skip\b|always\b|once\b|continue\b|accept\b|decline\b)',
+    caseSensitive: false,
+  );
 
   static ReaderDocument parse(String raw) {
     if (raw.trim().isEmpty) {
       return const ReaderDocument(blocks: []);
     }
 
-    // 1. Strip ANSI escapes & normalize line endings / agent glyphs
+    // 1. Strip ANSI escapes, normalize line endings / agent glyphs, and unwrap
+    //    outer single-column Unicode dialog borders (`│ ... │`).
     final cleanedText = raw
         .replaceAll('\r\n', '\n')
         .replaceAll('\r', '\n')
@@ -142,7 +239,10 @@ class TerminalReaderParser {
         .replaceAll('⏺', '●')
         .replaceAll('⎿', '└');
 
-    final rawLines = cleanedText.split('\n').map((l) => l.trimRight()).toList();
+    final rawLines = cleanedText
+        .split('\n')
+        .map((l) => _unwrapBoxFrame(l).trimRight())
+        .toList();
 
     // 2. Strip bottom TUI chrome (rules, empty prompt box, shortcut hints, model bar)
     String? modelTag;
@@ -184,10 +284,17 @@ class TerminalReaderParser {
       bodyLines.add(line);
     }
 
-    // 3. Parse into structured blocks with intelligent desktop-unwrap reflow
+    // 2b. Detect active interactive TUI prompt at the bottom of the screen
+    //     (e.g. Claude workspace trust dialog, permission menus, Codex/Gemini
+    //     confirmations, `[Y/n]` prompts) BEFORE normal prose/user-prompt parsing
+    //     so `❯ 1. Yes, I trust this folder` is never mistaken for a YOU bubble.
+    final extractedPrompt = _extractInteractivePrompt(bodyLines);
+    final parseEnd = extractedPrompt?.startIndex ?? bodyLines.length;
+
+    // 3. Parse remaining body lines into structured blocks with desktop-unwrap reflow
     final blocks = <ReaderBlock>[];
     var i = 0;
-    while (i < bodyLines.length) {
+    while (i < parseEnd) {
       final line = bodyLines[i];
       final trimmed = line.trim();
 
@@ -201,11 +308,11 @@ class TerminalReaderParser {
         final lang = trimmed.substring(3).trim();
         i++;
         final codeLines = <String>[];
-        while (i < bodyLines.length && !bodyLines[i].trim().startsWith('```')) {
+        while (i < parseEnd && !bodyLines[i].trim().startsWith('```')) {
           codeLines.add(bodyLines[i]);
           i++;
         }
-        if (i < bodyLines.length) i++;
+        if (i < parseEnd) i++;
         if (codeLines.isNotEmpty) {
           blocks.add(ReaderCodeBlock(
             language: lang.isEmpty ? null : lang,
@@ -216,14 +323,14 @@ class TerminalReaderParser {
       }
 
       // 3b. Diff block (numbered `19 - foo` / `19 + bar` or unified `-foo` / `+bar`)
-      if (_isDiffStart(bodyLines, i)) {
+      if (_isDiffStart(bodyLines, i, parseEnd)) {
         String? fileName;
         if (trimmed.startsWith('diff --git') ||
             trimmed.startsWith('--- ') ||
             trimmed.startsWith('+++ ')) {
           fileName = _extractDiffFileName(trimmed);
           i++;
-          while (i < bodyLines.length &&
+          while (i < parseEnd &&
               (bodyLines[i].trim().startsWith('--- ') ||
                   bodyLines[i].trim().startsWith('+++ ') ||
                   bodyLines[i].trim().startsWith('@@'))) {
@@ -234,7 +341,7 @@ class TerminalReaderParser {
         final diffLines = <ReaderDiffLine>[];
         var added = 0;
         var removed = 0;
-        while (i < bodyLines.length) {
+        while (i < parseEnd) {
           final cur = bodyLines[i];
           final ct = cur.trim();
           if (ct.isEmpty) break;
@@ -292,11 +399,10 @@ class TerminalReaderParser {
       // 3c. Tool execution group (consecutive tool calls + `└` outputs)
       if (_isToolCallLine(trimmed)) {
         final tools = <ReaderToolItem>[];
-        while (i < bodyLines.length) {
+        while (i < parseEnd) {
           final t = bodyLines[i].trim();
           if (t.isEmpty) {
-            // Peek past a single blank line if another tool call follows immediately
-            if (i + 1 < bodyLines.length &&
+            if (i + 1 < parseEnd &&
                 _isToolCallLine(bodyLines[i + 1].trim())) {
               i++;
               continue;
@@ -316,7 +422,7 @@ class TerminalReaderParser {
               cleanTitle.toLowerCase().contains('failed');
           i++;
           final details = <String>[];
-          while (i < bodyLines.length) {
+          while (i < parseEnd) {
             final dl = bodyLines[i];
             final dm = _toolDetailRegex.firstMatch(dl);
             if (dm != null) {
@@ -366,7 +472,7 @@ class TerminalReaderParser {
       if (upMatch != null && !trimmed.startsWith('>>')) {
         final buf = StringBuffer(upMatch.group(1)!.trim());
         i++;
-        while (i < bodyLines.length &&
+        while (i < parseEnd &&
             _isSoftContinuation(bodyLines[i], prevLine: buf.toString())) {
           _appendReflowed(buf, bodyLines[i].trim());
           i++;
@@ -386,11 +492,11 @@ class TerminalReaderParser {
       // 3g. Bullet or numbered list (with smart multi-line desktop unwrap!)
       if (_isBulletStart(line)) {
         final items = <String>[];
-        while (i < bodyLines.length) {
+        while (i < parseEnd) {
           final cur = bodyLines[i];
           final ct = cur.trim();
           if (ct.isEmpty) {
-            if (i + 1 < bodyLines.length && _isBulletStart(bodyLines[i + 1])) {
+            if (i + 1 < parseEnd && _isBulletStart(bodyLines[i + 1])) {
               i++;
               continue;
             }
@@ -398,11 +504,13 @@ class TerminalReaderParser {
           }
           final bm = _bulletRegex.firstMatch(cur);
           final nm = _numberedRegex.firstMatch(cur);
-          if (bm != null && !_isToolCallLine(ct) && !_isDiffStart(bodyLines, i)) {
+          if (bm != null &&
+              !_isToolCallLine(ct) &&
+              !_isDiffStart(bodyLines, i, parseEnd)) {
             final buf = StringBuffer(bm.group(1)!.trim());
             var lastRaw = cur;
             i++;
-            while (i < bodyLines.length &&
+            while (i < parseEnd &&
                 _isSoftContinuation(bodyLines[i], prevLine: lastRaw)) {
               lastRaw = bodyLines[i];
               _appendReflowed(buf, bodyLines[i].trim());
@@ -415,7 +523,7 @@ class TerminalReaderParser {
             final buf = StringBuffer('${nm.group(1)}. ${nm.group(2)!.trim()}');
             var lastRaw = cur;
             i++;
-            while (i < bodyLines.length &&
+            while (i < parseEnd &&
                 _isSoftContinuation(bodyLines[i], prevLine: lastRaw)) {
               lastRaw = bodyLines[i];
               _appendReflowed(buf, bodyLines[i].trim());
@@ -436,7 +544,7 @@ class TerminalReaderParser {
       final buf = StringBuffer(trimmed);
       var lastRaw = line;
       i++;
-      while (i < bodyLines.length &&
+      while (i < parseEnd &&
           _isSoftContinuation(bodyLines[i], prevLine: lastRaw)) {
         lastRaw = bodyLines[i];
         _appendReflowed(buf, bodyLines[i].trim());
@@ -445,7 +553,387 @@ class TerminalReaderParser {
       blocks.add(ReaderParagraphBlock(buf.toString()));
     }
 
-    return ReaderDocument(blocks: blocks, modelTag: modelTag);
+    if (extractedPrompt != null) {
+      blocks.add(ReaderInteractivePromptBlock(extractedPrompt.prompt));
+    }
+
+    return ReaderDocument(
+      blocks: blocks,
+      modelTag: modelTag,
+      interactivePrompt: extractedPrompt?.prompt,
+    );
+  }
+
+  /// Unwraps a single outer Unicode dialog frame (`│ ... │` or `┃ ... ┃`) while
+  /// preserving multi-column Unicode tables (lines containing inner `│`).
+  static String _unwrapBoxFrame(String line) {
+    final m = _outerBoxLineRegex.firstMatch(line);
+    if (m == null) return line;
+    final inner = m.group(1) ?? '';
+    if (inner.contains('│') || inner.contains('┃')) return line;
+    return inner;
+  }
+
+  /// Detects an active interactive TUI prompt at the bottom of `lines`:
+  /// 1. Numbered cursor menu (`❯ 1. Yes, I trust this folder` / `  2. No, exit`)
+  /// 2. Unnumbered cursor/radio menu (`❯ Yes, I trust this folder` / `  No, exit`)
+  /// 3. Classic `[Y/n]` / `(y/N)` confirmation prompt
+  static _ExtractedPrompt? _extractInteractivePrompt(List<String> lines) {
+    var end = lines.length;
+    while (end > 0 && lines[end - 1].trim().isEmpty) {
+      end--;
+    }
+    if (end == 0) return null;
+
+    // Consume an optional menu footer hint (`Enter to confirm · Esc to cancel`).
+    String? menuHint;
+    var allowsEsc = false;
+    var scanEnd = end;
+    for (var tries = 0; tries < 2 && scanEnd > 0; tries++) {
+      final t = lines[scanEnd - 1].trim();
+      if (t.isEmpty) {
+        scanEnd--;
+        continue;
+      }
+      if (_menuFooterHintRegex.hasMatch(t)) {
+        menuHint = menuHint == null ? t : '$t · $menuHint';
+        if (t.toLowerCase().contains('esc') ||
+            t.toLowerCase().contains('cancel')) {
+          allowsEsc = true;
+        }
+        scanEnd--;
+      } else {
+        break;
+      }
+    }
+    while (scanEnd > 0 && lines[scanEnd - 1].trim().isEmpty) {
+      scanEnd--;
+    }
+    if (scanEnd == 0) return null;
+
+    // ── Detector 1: Numbered TUI selection menu (`❯ 1. ...` / `  2. ...`) ──
+    final numbered = _tryExtractNumberedMenu(
+      lines,
+      scanEnd: scanEnd,
+      menuHint: menuHint,
+      allowsEsc: allowsEsc,
+    );
+    if (numbered != null) return numbered;
+
+    // ── Detector 2: Unnumbered TUI cursor/radio menu (`❯ Yes` / `  No`) ──
+    final unnumbered = _tryExtractUnnumberedMenu(
+      lines,
+      scanEnd: scanEnd,
+      menuHint: menuHint,
+      allowsEsc: allowsEsc,
+    );
+    if (unnumbered != null) return unnumbered;
+
+    // ── Detector 3: Classic `[Y/n]` or `(y/N)` confirmation at bottom ──
+    final lastLine = lines[scanEnd - 1].trim();
+    final ynMatch = _yesNoPromptRegex.firstMatch(lastLine);
+    if (ynMatch != null) {
+      final rawToken = ynMatch.group(0) ?? '';
+      final defaultNo =
+          rawToken.contains('N') && !rawToken.contains('Y');
+      final cleanTitle =
+          lastLine.substring(0, ynMatch.start).trim();
+      final title = cleanTitle.isNotEmpty ? cleanTitle : 'Confirm action';
+      final options = [
+        ReaderPromptOption(
+          index: 0,
+          label: 'Yes',
+          isSelected: !defaultNo,
+          shortcutKey: 'y',
+        ),
+        ReaderPromptOption(
+          index: 1,
+          label: 'No',
+          isSelected: defaultNo,
+          shortcutKey: 'n',
+          isDanger: true,
+        ),
+      ];
+      return _ExtractedPrompt(
+        startIndex: scanEnd - 1,
+        prompt: ReaderInteractivePrompt(
+          kind: PromptInputKind.yesNo,
+          title: title,
+          options: options,
+          selectedIndex: defaultNo ? 1 : 0,
+          allowsEsc: allowsEsc,
+          hint: menuHint,
+        ),
+      );
+    }
+
+    // ── Detector 4: Standalone `Press Enter to continue` / `Enter to confirm` ──
+    if (menuHint != null &&
+        RegExp(r'(?:press\s+enter\s+to\s+continue|enter\s+to\s+confirm)',
+                caseSensitive: false)
+            .hasMatch(menuHint)) {
+      final title = _findPromptTitle(lines, scanEnd) ?? 'Confirmation needed';
+      final options = <ReaderPromptOption>[
+        const ReaderPromptOption(
+          index: 0,
+          label: 'Continue (Enter)',
+          isSelected: true,
+        ),
+        if (allowsEsc)
+          const ReaderPromptOption(
+            index: 1,
+            label: 'Cancel (Esc)',
+            isSelected: false,
+            shortcutKey: 'esc',
+            isDanger: true,
+          ),
+      ];
+      return _ExtractedPrompt(
+        startIndex: scanEnd,
+        prompt: ReaderInteractivePrompt(
+          kind: PromptInputKind.confirmCancel,
+          title: title,
+          options: options,
+          selectedIndex: 0,
+          allowsEsc: allowsEsc,
+          hint: menuHint,
+        ),
+      );
+    }
+
+    return null;
+  }
+
+  static _ExtractedPrompt? _tryExtractNumberedMenu(
+    List<String> lines, {
+    required int scanEnd,
+    required String? menuHint,
+    required bool allowsEsc,
+  }) {
+    final parsed = <_RawMenuItem>[];
+    final trailingContinuation = <String>[];
+    var idx = scanEnd - 1;
+    var blanks = 0;
+
+    while (idx >= 0 && parsed.length < 6) {
+      final raw = lines[idx];
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) {
+        blanks++;
+        if (blanks > 1 || parsed.isEmpty) break;
+        idx--;
+        continue;
+      }
+      blanks = 0;
+      final m = _tuiNumberedOptionRegex.firstMatch(raw);
+      if (m != null) {
+        final cursor = m.group(1);
+        final numStr = m.group(2) ?? m.group(3);
+        final number = int.tryParse(numStr ?? '');
+        var label = (m.group(4) ?? '').trim();
+        if (trailingContinuation.isNotEmpty) {
+          label = '$label ${trailingContinuation.reversed.join(' ')}';
+          trailingContinuation.clear();
+        }
+        parsed.add(_RawMenuItem(
+          number: number,
+          hasCursor: cursor != null,
+          label: label,
+          startLine: idx,
+        ));
+        idx--;
+        continue;
+      }
+      // Allow 1-2 indented soft-wrapped continuation lines under an option
+      // (e.g. Claude's long "2. Yes, and don't ask again for Bash commands in /Users/...").
+      if (raw.startsWith('  ') &&
+          trailingContinuation.length < 2 &&
+          !_isToolCallLine(trimmed) &&
+          !trimmed.endsWith('?')) {
+        trailingContinuation.add(trimmed);
+        idx--;
+        continue;
+      }
+      break;
+    }
+
+    if (parsed.length < 2) return null;
+    final ordered = parsed.reversed.toList();
+
+    // Must be strictly sequential starting at 1 (1, 2, ...).
+    for (var k = 0; k < ordered.length; k++) {
+      if (ordered[k].number != k + 1) return null;
+    }
+
+    final cursorIndexes = <int>[];
+    for (var k = 0; k < ordered.length; k++) {
+      if (ordered[k].hasCursor) cursorIndexes.add(k);
+    }
+    // Require exactly 1 cursor marker, OR 0 markers ONLY when an explicit TUI
+    // menu footer (`Enter to confirm · Esc to cancel`) is present (reverse-video highlight).
+    if (cursorIndexes.length > 1) return null;
+    if (cursorIndexes.isEmpty && menuHint == null) return null;
+
+    final selectedIndex = cursorIndexes.isEmpty ? 0 : cursorIndexes.first;
+    final anyEsc = allowsEsc ||
+        ordered.any((o) => o.label.toLowerCase().contains('(esc)'));
+    final startLine = ordered.first.startLine;
+    final title = _findPromptTitle(lines, startLine) ?? 'Choose an option';
+
+    final options = <ReaderPromptOption>[
+      for (var k = 0; k < ordered.length; k++)
+        ReaderPromptOption(
+          index: k,
+          label: '${k + 1}. ${ordered[k].label}',
+          isSelected: k == selectedIndex,
+          shortcutKey: '${k + 1}',
+          isDanger: _looksLikeDangerOption(ordered[k].label),
+        ),
+    ];
+
+    return _ExtractedPrompt(
+      startIndex: startLine,
+      prompt: ReaderInteractivePrompt(
+        kind: PromptInputKind.tuiMenu,
+        title: title,
+        options: options,
+        selectedIndex: selectedIndex,
+        allowsEsc: anyEsc,
+        hint: menuHint,
+      ),
+    );
+  }
+
+  static _ExtractedPrompt? _tryExtractUnnumberedMenu(
+    List<String> lines, {
+    required int scanEnd,
+    required String? menuHint,
+    required bool allowsEsc,
+  }) {
+    final collected = <_RawMenuItem>[];
+    var idx = scanEnd - 1;
+    while (idx >= 0 && collected.length < 5) {
+      final raw = lines[idx];
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty) break;
+      if (trimmed.length > 96 || _isToolCallLine(trimmed)) break;
+      if (trimmed.endsWith('?') || trimmed.endsWith(':')) break;
+
+      final cm = _tuiCursorOptionRegex.firstMatch(raw);
+      if (cm != null) {
+        final marker = cm.group(1)!;
+        final label = cm.group(2)!.trim();
+        collected.add(_RawMenuItem(
+          number: null,
+          hasCursor: marker != '○',
+          label: label,
+          startLine: idx,
+        ));
+        idx--;
+        continue;
+      }
+      // Sibling unselected line (must not be a prose bullet `-` / `*` / `•`)
+      if (!trimmed.startsWith('-') &&
+          !trimmed.startsWith('*') &&
+          !trimmed.startsWith('•') &&
+          (raw.startsWith(' ') || _choiceWordRegex.hasMatch(trimmed))) {
+        collected.add(_RawMenuItem(
+          number: null,
+          hasCursor: false,
+          label: trimmed,
+          startLine: idx,
+        ));
+        idx--;
+        continue;
+      }
+      break;
+    }
+
+    if (collected.length < 2) return null;
+    final ordered = collected.reversed.toList();
+    final cursorIndexes = <int>[];
+    for (var k = 0; k < ordered.length; k++) {
+      if (ordered[k].hasCursor) cursorIndexes.add(k);
+    }
+    if (cursorIndexes.length != 1) return null;
+
+    final startLine = ordered.first.startLine;
+    final title = _findPromptTitle(lines, startLine);
+    final hasChoiceKeywords =
+        ordered.any((o) => _choiceWordRegex.hasMatch(o.label));
+    if (menuHint == null && title == null && !hasChoiceKeywords) {
+      return null;
+    }
+    // Guard against misclassifying a random `❯ prompt` + plain line beneath it.
+    if (menuHint == null && !hasChoiceKeywords) {
+      return null;
+    }
+
+    final selectedIndex = cursorIndexes.first;
+    final anyEsc = allowsEsc ||
+        ordered.any((o) => o.label.toLowerCase().contains('(esc)'));
+    final options = <ReaderPromptOption>[
+      for (var k = 0; k < ordered.length; k++)
+        ReaderPromptOption(
+          index: k,
+          label: ordered[k].label,
+          isSelected: k == selectedIndex,
+          isDanger: _looksLikeDangerOption(ordered[k].label),
+        ),
+    ];
+
+    return _ExtractedPrompt(
+      startIndex: startLine,
+      prompt: ReaderInteractivePrompt(
+        kind: PromptInputKind.tuiMenu,
+        title: title ?? 'Choose an option',
+        options: options,
+        selectedIndex: selectedIndex,
+        allowsEsc: anyEsc,
+        hint: menuHint,
+      ),
+    );
+  }
+
+  /// Scans slightly above a detected menu block to pick a crisp 1-line title
+  /// (e.g. `"Do you trust the files in this folder?"` or `"Do you want to proceed?"`).
+  static String? _findPromptTitle(List<String> lines, int menuStart) {
+    final lowerBound = (menuStart - 12).clamp(0, menuStart);
+    String? fallbackQuestion;
+    for (var i = menuStart - 1; i >= lowerBound; i--) {
+      final t = lines[i].trim();
+      if (t.isEmpty) continue;
+      final lower = t.toLowerCase();
+      if (lower.contains('trust the files in this folder') ||
+          lower.contains('trust this folder') ||
+          lower.contains('quick safety check') ||
+          lower.contains('do you trust')) {
+        return t.length > 90 ? 'Do you trust this folder?' : t;
+      }
+      if (fallbackQuestion == null &&
+          t.length <= 100 &&
+          (t.endsWith('?') ||
+              lower.startsWith('do you want') ||
+              lower.startsWith('would you like') ||
+              lower.startsWith('allow ') ||
+              lower.startsWith('? allow'))) {
+        fallbackQuestion = t.replaceFirst(RegExp(r'^\?\s+'), '');
+      }
+    }
+    return fallbackQuestion;
+  }
+
+  static bool _looksLikeDangerOption(String label) {
+    final lower = label.trim().toLowerCase();
+    return lower == 'no' ||
+        lower.startsWith('no,') ||
+        lower.startsWith('no ') ||
+        lower.startsWith('deny') ||
+        lower.startsWith('reject') ||
+        lower.startsWith('cancel') ||
+        lower.startsWith('exit') ||
+        lower.startsWith('abort') ||
+        lower.contains('(esc)');
   }
 
   static bool _isRuleLine(String trimmed) =>
@@ -473,7 +961,6 @@ class TerminalReaderParser {
   }
 
   static String _cleanModelTag(String line) {
-    // Strip leading `auto · ` or path tails after `~/...` so the pill stays crisp.
     final parts = line
         .split(RegExp(r'\s*[·•]\s*'))
         .map((s) => s.trim())
@@ -496,21 +983,19 @@ class TerminalReaderParser {
     final trimmed = rawLine.trim();
     if (_isToolCallLine(trimmed)) return false;
     if (_bulletRegex.hasMatch(rawLine)) {
-      // A line like `- timezone: "UTC"` followed by `+ timezone:` is a diff, not a bullet.
       return true;
     }
     return _numberedRegex.hasMatch(rawLine);
   }
 
-  static bool _isDiffStart(List<String> lines, int idx) {
+  static bool _isDiffStart(List<String> lines, int idx, int parseEnd) {
     final cur = lines[idx];
     final t = cur.trim();
     if (t.startsWith('diff --git') || t.startsWith('@@ ')) return true;
     if (_numberedDiffRegex.hasMatch(cur)) return true;
     if ((t.startsWith('+') && !t.startsWith('+++')) ||
         (t.startsWith('-') && !t.startsWith('---'))) {
-      // Require adjacent diff line so normal `- bullet` prose isn't treated as a diff
-      if (idx + 1 < lines.length) {
+      if (idx + 1 < parseEnd) {
         final next = lines[idx + 1].trim();
         if ((next.startsWith('+') && !next.startsWith('+++')) ||
             (next.startsWith('-') && !next.startsWith('---')) ||
@@ -560,11 +1045,9 @@ class TerminalReaderParser {
       return;
     }
 
-    // Grab the trailing non-whitespace token of `prev`
     final lastSpace = prev.lastIndexOf(' ');
     final lastToken = lastSpace == -1 ? prev : prev.substring(lastSpace + 1);
 
-    // 1. Mid-URL break (`https://github.` + `com/ilham/...`, or `.../tag/` + `v0.3.16`)
     final isUrlBreak = (lastToken.contains('://') ||
             lastToken.startsWith('http') ||
             lastToken.contains('.com/') ||
@@ -578,7 +1061,6 @@ class TerminalReaderParser {
             RegExp(r'^[a-z0-9._~:/?#\[\]@!$&()*+,;=%-]+(?:\s|$)')
                 .hasMatch(nextTrim));
 
-    // 2. Mid-file-path break (`~/Developments/.../test/live_companion_server_tes` + `t.dart`)
     final isPathBreak = (lastToken.contains('/') || lastToken.contains('_')) &&
         !lastToken.endsWith('.') &&
         !lastToken.endsWith(',') &&
@@ -591,9 +1073,9 @@ class TerminalReaderParser {
             RegExp(r'^[a-z0-9_-]*\.[a-z]{1,6}(?:[\s),.:]|$)')
                 .hasMatch(nextTrim));
 
-    // 3. Hyphenated word wrap (`in-` + `app updater`)
-    final isHyphenBreak =
-        lastToken.endsWith('-') && lastToken.length > 1 && RegExp(r'^[a-z]').hasMatch(nextTrim);
+    final isHyphenBreak = lastToken.endsWith('-') &&
+        lastToken.length > 1 &&
+        RegExp(r'^[a-z]').hasMatch(nextTrim);
 
     if (isUrlBreak || isPathBreak || isHyphenBreak) {
       buf.write(nextTrim);

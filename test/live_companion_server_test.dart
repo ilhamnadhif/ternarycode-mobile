@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ternarycode_mobile/services/companion_api.dart';
 import 'package:ternarycode_mobile/services/notification_service.dart';
 import 'package:ternarycode_mobile/services/storage_service.dart';
+import 'package:ternarycode_mobile/services/terminal_reader_parser.dart';
 import 'package:ternarycode_mobile/state/app_controller.dart';
 
 /// End-to-end integration test against a real local HTTP/1.1 + SSE server
@@ -293,7 +294,35 @@ void main() {
       'profile_id': 'claude2',
     });
 
-    // 5. Revoke token on server and retry -> enters ConnectionPhase.revoked & shows offline wall
+    // 5. Interactive TUI prompt selection (Claude Trust / Permission menus & [Y/n])
+    final trustPrompt = TerminalReaderParser.parse('''
+Do you trust the files in this folder?
+❯ 1. Yes, I trust this folder
+  2. No, exit
+Enter to confirm · Esc to cancel
+''').interactivePrompt!;
+    receivedActions.clear();
+    // Tapping already-selected option 0 sends ONLY standalone Enter
+    await ctrl.selectInteractiveOption(1, trustPrompt, trustPrompt.options[0]);
+    // Tapping option 1 (delta +1) sends Down arrow + Enter
+    await ctrl.selectInteractiveOption(1, trustPrompt, trustPrompt.options[1]);
+    // Unnumbered menu with option 1 selected -> tapping option 0 (delta -1) sends Up arrow + Enter
+    final reverseTrust = TerminalReaderParser.parse('''
+Do you trust the files in this folder?
+  Yes, I trust this folder
+❯ No, exit
+Enter to confirm · Esc to cancel
+''').interactivePrompt!;
+    await ctrl.selectInteractiveOption(1, reverseTrust, reverseTrust.options[0]);
+
+    expect(receivedActions.length, 5);
+    expect(receivedActions[0]['body'], {'text': '', 'enter': true});
+    expect(receivedActions[1]['body'], {'text': '\x1B[B', 'enter': false});
+    expect(receivedActions[2]['body'], {'text': '', 'enter': true});
+    expect(receivedActions[3]['body'], {'text': '\x1B[A', 'enter': false});
+    expect(receivedActions[4]['body'], {'text': '', 'enter': true});
+
+    // 6. Revoke token on server and retry -> enters ConnectionPhase.revoked & shows offline wall
     tokenRevoked = true;
     await ctrl.retryConnection();
     expect(ctrl.phase, ConnectionPhase.revoked);

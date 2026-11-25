@@ -10,6 +10,7 @@ import '../services/apk_updater.dart';
 import '../services/companion_api.dart';
 import '../services/notification_service.dart';
 import '../services/storage_service.dart';
+import '../services/terminal_reader_parser.dart';
 
 enum ConnectionPhase { disconnected, connecting, connected, reconnecting, revoked }
 
@@ -26,6 +27,7 @@ class AppController extends ChangeNotifier {
     this.autoCheckUpdates = false,
     this.loadPlatformInfo = false,
     this.enterDelay = const Duration(milliseconds: 220),
+    this.menuKeyDelay = const Duration(milliseconds: 75),
   })  : _api = api,
         _storage = storage,
         _notifications = notifications,
@@ -43,10 +45,14 @@ class AppController extends ChangeNotifier {
   /// submit the prompt instead of inserting a newline.
   final Duration enterDelay;
 
+  /// Pause between consecutive arrow keypresses when selecting an item in an
+  /// interactive TUI menu (Claude Code trust/permission, Codex, Gemini, etc.).
+  final Duration menuKeyDelay;
+
   ApkReleaseInfo? _availableUpdate;
   ApkReleaseInfo? get availableUpdate => _availableUpdate;
 
-  String _appVersion = '0.3.1';
+  String _appVersion = '0.3.2';
   String get appVersion => _appVersion;
 
   bool _bootstrapped = false;
@@ -834,10 +840,18 @@ class AppController extends ChangeNotifier {
     String text, {
     bool enter = true,
     String? toastLabel,
+    bool silent = false,
   }) {
-    _triggerHaptic();
+    if (!silent) {
+      _triggerHaptic();
+    }
     if (isDemoMode) {
-      _handleDemoInput(paneId, text, enter: enter, toastLabel: toastLabel);
+      _handleDemoInput(
+        paneId,
+        text,
+        enter: enter,
+        toastLabel: silent ? null : toastLabel,
+      );
       return Future<void>.value();
     }
 
@@ -847,9 +861,69 @@ class AppController extends ChangeNotifier {
           text,
           enter: enter,
           toastLabel: toastLabel,
+          silent: silent,
         ));
     _sendQueue = next.catchError((_) {});
     return next;
+  }
+
+  /// Answers a detected interactive TUI prompt (e.g. Claude Code workspace trust
+  /// dialog, permission menu, Codex/Gemini confirmation, or `[Y/n]` prompt) by
+  /// sending the exact arrow delta + Enter or confirmation key sequence.
+  Future<void> selectInteractiveOption(
+    int paneId,
+    ReaderInteractivePrompt prompt,
+    ReaderPromptOption option,
+  ) async {
+    switch (prompt.kind) {
+      case PromptInputKind.tuiMenu:
+        final delta = option.index - prompt.selectedIndex;
+        if (delta != 0) {
+          final seq = delta > 0 ? '\x1B[B' : '\x1B[A';
+          final steps = delta.abs();
+          for (var s = 0; s < steps; s++) {
+            await sendTerminalInput(
+              paneId,
+              seq,
+              enter: false,
+              silent: true,
+            );
+            if (menuKeyDelay > Duration.zero) {
+              await Future<void>.delayed(menuKeyDelay);
+            }
+          }
+        }
+        await sendTerminalInput(
+          paneId,
+          '',
+          enter: true,
+          toastLabel: 'Selected: ${option.label}',
+        );
+      case PromptInputKind.yesNo:
+        final key = option.shortcutKey ?? (option.index == 0 ? 'y' : 'n');
+        await sendTerminalInput(
+          paneId,
+          key,
+          enter: true,
+          toastLabel: 'Sent ${option.label}',
+        );
+      case PromptInputKind.confirmCancel:
+        if (option.shortcutKey == 'esc') {
+          await sendTerminalInput(
+            paneId,
+            '\x1B',
+            enter: false,
+            toastLabel: 'Sent Esc',
+          );
+        } else {
+          await sendTerminalInput(
+            paneId,
+            '',
+            enter: true,
+            toastLabel: 'Confirmed',
+          );
+        }
+    }
   }
 
   Future<void> _performSendTerminalInput(
@@ -857,6 +931,7 @@ class AppController extends ChangeNotifier {
     String text, {
     required bool enter,
     String? toastLabel,
+    bool silent = false,
   }) async {
     final host = activeHost;
     if (host == null) return;
@@ -902,7 +977,9 @@ class AppController extends ChangeNotifier {
           enter: enter,
         );
       }
-      showToast(toastLabel ?? 'Sent to pane');
+      if (!silent) {
+        showToast(toastLabel ?? 'Sent to pane');
+      }
     } on CompanionApiException catch (e) {
       _handleActionError(host.id, e);
     }

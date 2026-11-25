@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
 import '../models/companion_models.dart';
+import '../services/terminal_reader_parser.dart';
 import '../state/app_controller.dart';
 import '../theme/agent_icons.dart';
 import '../theme/slate_theme.dart';
@@ -184,15 +185,18 @@ class _LiveScreenState extends State<LiveScreen> {
     }
 
     final isRaw = _isRawMode(pane);
+    final doc = TerminalReaderParser.parse(pane.output);
+    final interactivePrompt = doc.interactivePrompt;
     final keysVisible = isRaw || _showQuickKeys;
     final dotColor = hostOnline
         ? c.done
         : (hostReconnecting ? c.input : c.failed);
-    final subBarBottomColor = pane.status == 'needs_input'
-        ? c.input.withValues(alpha: 0.34)
-        : pane.rateLimit != null
-            ? c.limited.withValues(alpha: 0.34)
-            : c.lineSubtle;
+    final subBarBottomColor =
+        (pane.status == 'needs_input' || interactivePrompt != null)
+            ? c.input.withValues(alpha: 0.34)
+            : pane.rateLimit != null
+                ? c.limited.withValues(alpha: 0.34)
+                : c.lineSubtle;
     final metaParts = <String>[
       if (pane.profile != null && pane.profile!.isNotEmpty)
         pane.profile!
@@ -476,7 +480,16 @@ class _LiveScreenState extends State<LiveScreen> {
                   )
                 : SlateReaderView(
                     pane: pane,
+                    document: doc,
                     onToast: ctrl.showToast,
+                    onSelectOption: (prompt, opt) =>
+                        ctrl.selectInteractiveOption(pane.id, prompt, opt),
+                    onCancelPrompt: () => ctrl.sendTerminalInput(
+                      pane.id,
+                      '\x1B',
+                      enter: false,
+                      toastLabel: 'Sent Esc',
+                    ),
                     fontScale: (ctrl.settings.termFontSize / 11.5).clamp(0.85, 1.35),
                   ),
           ),
@@ -493,7 +506,14 @@ class _LiveScreenState extends State<LiveScreen> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              ..._buildActionBlock(context, ctrl, snap, pane),
+              ..._buildActionBlock(
+                context,
+                ctrl,
+                snap,
+                pane,
+                interactivePrompt: interactivePrompt,
+                keyboardOpen: keyboardOpen,
+              ),
 
               // Compact Switch account chips when running with profile support
               if (!keyboardOpen &&
@@ -694,8 +714,10 @@ class _LiveScreenState extends State<LiveScreen> {
     BuildContext context,
     AppController ctrl,
     CompanionSnapshot snap,
-    CompanionPane pane,
-  ) {
+    CompanionPane pane, {
+    ReaderInteractivePrompt? interactivePrompt,
+    bool keyboardOpen = false,
+  }) {
     if (pane.rateLimit != null) {
       final rl = pane.rateLimit!;
       final healthy = snap.healthyProfilesFor(pane);
@@ -731,6 +753,24 @@ class _LiveScreenState extends State<LiveScreen> {
             ],
           ),
         ],
+        const SizedBox(height: 8),
+      ];
+    }
+
+    if (interactivePrompt != null) {
+      return [
+        InteractivePromptDock(
+          prompt: interactivePrompt,
+          compact: keyboardOpen,
+          onSelect: (opt) =>
+              ctrl.selectInteractiveOption(pane.id, interactivePrompt, opt),
+          onCancel: () => ctrl.sendTerminalInput(
+            pane.id,
+            '\x1B',
+            enter: false,
+            toastLabel: 'Sent Esc',
+          ),
+        ),
         const SizedBox(height: 8),
       ];
     }

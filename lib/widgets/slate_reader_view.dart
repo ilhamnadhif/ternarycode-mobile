@@ -17,12 +17,19 @@ class SlateReaderView extends StatefulWidget {
     super.key,
     required this.pane,
     required this.onToast,
+    this.document,
+    this.onSelectOption,
+    this.onCancelPrompt,
     this.controller,
     this.fontScale = 1.0,
   });
 
   final CompanionPane pane;
   final ValueChanged<String> onToast;
+  final ReaderDocument? document;
+  final void Function(ReaderInteractivePrompt, ReaderPromptOption)?
+      onSelectOption;
+  final VoidCallback? onCancelPrompt;
   final ScrollController? controller;
   final double fontScale;
 
@@ -87,7 +94,7 @@ class _SlateReaderViewState extends State<SlateReaderView> {
   Widget build(BuildContext context) {
     final c = context.slate;
     final pane = widget.pane;
-    final doc = TerminalReaderParser.parse(pane.output);
+    final doc = widget.document ?? TerminalReaderParser.parse(pane.output);
     final proseSize = (13.5 * widget.fontScale).clamp(11.0, 17.5);
 
     if (doc.blocks.isEmpty) {
@@ -389,7 +396,383 @@ class _SlateReaderViewState extends State<SlateReaderView> {
             ),
           ),
         );
+
+      case ReaderInteractivePromptBlock(:final prompt):
+        return _InteractivePromptCard(
+          prompt: prompt,
+          onSelect: widget.onSelectOption == null
+              ? null
+              : (opt) => widget.onSelectOption!(prompt, opt),
+          onCancel: widget.onCancelPrompt,
+        );
     }
+  }
+}
+
+/// Inline interactive TUI prompt card inside Slate Reader (e.g. Claude Code's
+/// workspace trust dialog or permission choices). Clean hairline border with
+/// zero blue left stripe; tapping any option immediately sends the right keys.
+class _InteractivePromptCard extends StatelessWidget {
+  const _InteractivePromptCard({
+    required this.prompt,
+    required this.onSelect,
+    required this.onCancel,
+  });
+
+  final ReaderInteractivePrompt prompt;
+  final ValueChanged<ReaderPromptOption>? onSelect;
+  final VoidCallback? onCancel;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.slate;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: c.raised,
+        borderRadius: BorderRadius.circular(11),
+        border: Border.all(color: c.input.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: c.input,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  prompt.title,
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: c.text,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          for (var i = 0; i < prompt.options.length; i++) ...[
+            if (i > 0) const SizedBox(height: 6),
+            _PromptOptionRow(
+              option: prompt.options[i],
+              onTap: onSelect == null ? null : () => onSelect!(prompt.options[i]),
+            ),
+          ],
+          if (prompt.hint != null && prompt.hint!.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    prompt.hint!,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: SlateTypography.data(c, size: 10.5, color: c.text3),
+                  ),
+                ),
+                if (prompt.allowsEsc && onCancel != null) ...[
+                  const SizedBox(width: 8),
+                  InkWell(
+                    onTap: onCancel,
+                    borderRadius: BorderRadius.circular(6),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      child: Text(
+                        'Esc',
+                        style: SlateTypography.data(
+                          c,
+                          size: 11,
+                          weight: FontWeight.w600,
+                          color: c.text2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _PromptOptionRow extends StatelessWidget {
+  const _PromptOptionRow({
+    required this.option,
+    required this.onTap,
+  });
+
+  final ReaderPromptOption option;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.slate;
+    final highlighted = option.isSelected && !option.isDanger;
+    final bg = highlighted ? c.accentTint : c.sheet;
+    final border = highlighted
+        ? c.accent.withValues(alpha: 0.38)
+        : c.lineSubtle;
+    final fg = highlighted
+        ? c.accentText
+        : option.isDanger
+            ? c.text2
+            : c.text;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: border),
+          ),
+          child: Row(
+            children: [
+              Icon(
+                option.isSelected
+                    ? PhosphorIconsBold.caretRight
+                    : PhosphorIconsRegular.circle,
+                size: option.isSelected ? 12 : 8,
+                color: highlighted ? c.accentText : c.text3,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  option.label,
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 12.5,
+                    fontWeight:
+                        option.isSelected ? FontWeight.w600 : FontWeight.w500,
+                    height: 1.35,
+                    color: fg,
+                  ),
+                ),
+              ),
+              Icon(
+                PhosphorIconsRegular.arrowBendDownLeft,
+                size: 13,
+                color: highlighted ? c.accentText : c.text3,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Compact, thumb-friendly 1-tap choice dock shown right above the composer
+/// whenever an active TUI prompt (trust dialog, permission menu, `[Y/n]`) is
+/// detected — works identically in Reader, Raw, and Fullscreen modes!
+class InteractivePromptDock extends StatelessWidget {
+  const InteractivePromptDock({
+    super.key,
+    required this.prompt,
+    required this.onSelect,
+    this.onCancel,
+    this.compact = false,
+  });
+
+  final ReaderInteractivePrompt prompt;
+  final ValueChanged<ReaderPromptOption> onSelect;
+  final VoidCallback? onCancel;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.slate;
+    final twoShort = prompt.options.length == 2 &&
+        prompt.options.every((o) => o.label.length <= 20);
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 9),
+      decoration: BoxDecoration(
+        color: c.inputTint,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: c.input.withValues(alpha: 0.32)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 6,
+                height: 6,
+                decoration: BoxDecoration(
+                  color: c.input,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Text(
+                  prompt.title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w600,
+                    color: c.text,
+                  ),
+                ),
+              ),
+              if (prompt.allowsEsc && onCancel != null) ...[
+                const SizedBox(width: 6),
+                Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    onTap: onCancel,
+                    borderRadius: BorderRadius.circular(6),
+                    child: Ink(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 7, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: c.raised,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: c.lineSubtle),
+                      ),
+                      child: Text(
+                        'Esc',
+                        style: SlateTypography.data(
+                          c,
+                          size: 10.5,
+                          weight: FontWeight.w600,
+                          color: c.text2,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 7),
+          if (twoShort)
+            Row(
+              children: [
+                for (var i = 0; i < prompt.options.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 7),
+                  Expanded(
+                    child: _DockOptionButton(
+                      option: prompt.options[i],
+                      isPrimary: !prompt.options[i].isDanger &&
+                          (prompt.options[i].isSelected || i == 0),
+                      onTap: () => onSelect(prompt.options[i]),
+                    ),
+                  ),
+                ],
+              ],
+            )
+          else
+            ConstrainedBox(
+              constraints: BoxConstraints(maxHeight: compact ? 84 : 156),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < prompt.options.length; i++) ...[
+                      if (i > 0) const SizedBox(height: 5),
+                      _DockOptionButton(
+                        option: prompt.options[i],
+                        isPrimary: !prompt.options[i].isDanger &&
+                            (prompt.options[i].isSelected || i == 0),
+                        alignLeft: true,
+                        onTap: () => onSelect(prompt.options[i]),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DockOptionButton extends StatelessWidget {
+  const _DockOptionButton({
+    required this.option,
+    required this.isPrimary,
+    required this.onTap,
+    this.alignLeft = false,
+  });
+
+  final ReaderPromptOption option;
+  final bool isPrimary;
+  final VoidCallback onTap;
+  final bool alignLeft;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = context.slate;
+    final bg = isPrimary ? c.accent : c.raised;
+    final border = isPrimary ? c.accent : c.line;
+    final fg = isPrimary
+        ? Colors.white
+        : option.isDanger
+            ? c.text2
+            : c.text;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Ink(
+          height: 36,
+          padding: const EdgeInsets.symmetric(horizontal: 11),
+          decoration: BoxDecoration(
+            color: bg,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: border),
+          ),
+          child: Row(
+            mainAxisAlignment:
+                alignLeft ? MainAxisAlignment.start : MainAxisAlignment.center,
+            children: [
+              Flexible(
+                child: Text(
+                  option.label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontFamily: 'Inter',
+                    fontSize: 12,
+                    fontWeight: isPrimary ? FontWeight.w600 : FontWeight.w500,
+                    color: fg,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

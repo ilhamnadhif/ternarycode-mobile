@@ -4,7 +4,10 @@ import 'package:ternarycode_mobile/app.dart';
 import 'package:ternarycode_mobile/services/companion_api.dart';
 import 'package:ternarycode_mobile/services/notification_service.dart';
 import 'package:ternarycode_mobile/services/storage_service.dart';
+import 'package:ternarycode_mobile/services/terminal_reader_parser.dart';
 import 'package:ternarycode_mobile/state/app_controller.dart';
+import 'package:ternarycode_mobile/theme/slate_theme.dart';
+import 'package:ternarycode_mobile/widgets/slate_reader_view.dart';
 
 void main() {
   Future<AppController> buildController() async {
@@ -222,5 +225,64 @@ void main() {
 
     // Drain final toast timer cleanly
     await tester.pump(const Duration(seconds: 3));
+  });
+
+  testWidgets('InteractivePromptDock renders Claude Trust choices cleanly with 0 overflow',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(390 * 3, 844 * 3);
+    tester.view.devicePixelRatio = 3.0;
+    addTearDown(tester.view.reset);
+
+    final doc = TerminalReaderParser.parse('''
+╭────────────────────────────────────────────────────────╮
+│ Do you trust the files in this folder?                 │
+│                                                        │
+│ /Users/ilham/Developments/demo                         │
+│                                                        │
+│ ❯ 1. Yes, I trust this folder                          │
+│   2. No, exit                                          │
+│                                                        │
+│ Enter to confirm · Esc to cancel                       │
+╰────────────────────────────────────────────────────────╯
+''');
+    expect(doc.interactivePrompt, isNotNull);
+
+    ReaderPromptOption? tapped;
+    var cancelled = false;
+
+    for (final mode in [ThemeMode.dark, ThemeMode.light]) {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: SlateTheme.build(Brightness.light),
+          darkTheme: SlateTheme.build(Brightness.dark),
+          themeMode: mode,
+          home: Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(14),
+                child: InteractivePromptDock(
+                  prompt: doc.interactivePrompt!,
+                  onSelect: (opt) => tapped = opt,
+                  onCancel: () => cancelled = true,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('Do you trust the files in this folder?'), findsOneWidget);
+      expect(find.text('1. Yes, I trust this folder'), findsOneWidget);
+      expect(find.text('2. No, exit'), findsOneWidget);
+      expect(find.text('Esc'), findsOneWidget);
+    }
+
+    await tester.tap(find.text('1. Yes, I trust this folder'));
+    await tester.pump();
+    expect(tapped?.index, 0);
+
+    await tester.tap(find.text('Esc'));
+    await tester.pump();
+    expect(cancelled, isTrue);
   });
 }

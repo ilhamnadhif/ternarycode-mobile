@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:phosphor_flutter/phosphor_flutter.dart';
 
+import '../services/terminal_reader_parser.dart';
 import '../state/app_controller.dart';
 import '../theme/agent_icons.dart';
 import '../theme/slate_theme.dart';
@@ -78,6 +79,10 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
             ctrl.selectedPane;
         final settings = ctrl.settings;
         final isRaw = _rawOverride ?? (pane?.agentKey == 'shell');
+        final doc =
+            pane != null ? TerminalReaderParser.parse(pane.output) : null;
+        final interactivePrompt = doc?.interactivePrompt;
+        final keyboardOpen = MediaQuery.viewInsetsOf(context).bottom > 100;
 
         return Scaffold(
           backgroundColor: c.window,
@@ -195,8 +200,18 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                                 )
                               : SlateReaderView(
                                   pane: pane,
+                                  document: doc,
                                   controller: _scrollCtrl,
                                   onToast: ctrl.showToast,
+                                  onSelectOption: (prompt, opt) =>
+                                      ctrl.selectInteractiveOption(
+                                          pane.id, prompt, opt),
+                                  onCancelPrompt: () => ctrl.sendTerminalInput(
+                                    pane.id,
+                                    '\x1B',
+                                    enter: false,
+                                    toastLabel: 'Sent Esc',
+                                  ),
                                   fontScale: (settings.termFontSize / 11.5)
                                       .clamp(0.85, 1.35),
                                 ),
@@ -258,7 +273,24 @@ class _FullscreenTerminalScreenState extends State<FullscreenTerminalScreen> {
                     ),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
+                        if (interactivePrompt != null &&
+                            pane.rateLimit == null) ...[
+                          InteractivePromptDock(
+                            prompt: interactivePrompt,
+                            compact: keyboardOpen,
+                            onSelect: (opt) => ctrl.selectInteractiveOption(
+                                pane.id, interactivePrompt, opt),
+                            onCancel: () => ctrl.sendTerminalInput(
+                              pane.id,
+                              '\x1B',
+                              enter: false,
+                              toastLabel: 'Sent Esc',
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
                         QuickKeysStrip(
                           onEnter: () => ctrl.sendTerminalInput(pane.id, '',
                               enter: true, toastLabel: 'Sent Enter'),
